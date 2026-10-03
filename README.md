@@ -26,7 +26,7 @@ go build -o ~/.local/bin/kitt.exe ./cmd/kitt     # any directory on PATH
 kitt repo add                 # once, inside the repo
 kitt dash --workspace         # the dashboard as its own herdr workspace
 
-kitt new 338 --agent          # lane for issue 338: worktree, branch, env links, install, an agent on the issue
+kitt new 338                  # lane for issue 338: worktree, branch, env links, install, and an agent started on the issue
 kitt new cook-mode-proto --prompt "/wayfinder cook mode across several recipes"
 ```
 
@@ -34,17 +34,18 @@ In the dashboard, one row per lane: the agent's state, uncommitted and behind co
 
 | Key | |
 |---|---|
-| `enter` | go into the lane: its herdr workspace and agent, its app in the emulator |
+| `enter` | go into the lane: its herdr workspace and agent, its dev servers started, its app in the emulator |
+| `g` | start the lane's agent (on its issue, if it has one) |
 | `e` | only point the emulator at the lane |
 | `u` / `d` | start / stop the lane's dev servers |
 | `c` | run the repo's checks for the apps the lane touched |
 | `p` | open the lane's proof |
-| `n` / `N` | new lane / new lane with an agent |
+| `n` | new lane: an issue number starts an agent on it, a name only makes the lane |
 | `a` | adopt a worktree kitt did not create (Claude's, herdr's, a hand-made one) |
 | `x` | remove a lane that holds nothing unsaved |
 | `t` | show the worktrees that are not lanes |
 
-Every key is also a command: `kitt focus`, `kitt emu`, `kitt up`, `kitt check`, `kitt proof open`, `kitt adopt`, `kitt rm`. See `kitt help`.
+Every key is also a command: `kitt focus`, `kitt agent`, `kitt emu`, `kitt up`, `kitt check`, `kitt proof open`, `kitt adopt`, `kitt rm`. See `kitt help`.
 
 ## How lanes stay apart
 

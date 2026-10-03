@@ -177,8 +177,6 @@ func (d dash) pressed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		d.cursor = 0
 	case "n":
 		d.mode, d.input = "new", ""
-	case "N":
-		d.mode, d.input = "new-agent", ""
 	}
 	if row == nil {
 		return d, nil
@@ -203,6 +201,11 @@ func (d dash) pressed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return doneMsg(message)
 		}
+	case "g":
+		if !row.Managed {
+			return say(row.Name + " is not a lane yet: press a to adopt it")
+		}
+		return start("agent for "+row.Name, "agent", target)
 	case "u":
 		return start("starting dev servers of "+row.Name, "up", target)
 	case "d":
@@ -363,7 +366,7 @@ func (d dash) View() string {
 		if d.mode == "new-agent" {
 			what = "new lane with an agent"
 		}
-		b.WriteString("  " + accent.Render(what) + dim.Render(" · issue number or a name: ") + d.input + "▏\n")
+		b.WriteString("  " + accent.Render(what) + dim.Render(" · an issue number starts an agent on it, a name only makes the lane: ") + d.input + "▏\n")
 	case d.mode == "remove" && d.cursor < len(rows):
 		b.WriteString("  " + red.Render("remove "+rows[d.cursor].Name+"?") + dim.Render(" y removes the worktree · any other key keeps it") + "\n")
 	case d.busy != "":
@@ -373,7 +376,7 @@ func (d dash) View() string {
 	default:
 		b.WriteString("\n")
 	}
-	b.WriteString("\n  " + dim.Render("enter open · e emulator · u up · d down · c check · p proof · n new · N new+agent · x remove · q quit") + "\n")
+	b.WriteString("\n  " + dim.Render("enter open · g agent · e emulator · u up · d down · c check · p proof · n new · x remove · q quit") + "\n")
 
 	return b.String()
 }

@@ -105,6 +105,16 @@ func focus(lane Lane, agentPane string) []string {
 		}
 	}
 	if cfg := loadRepoConfig(lane.Main, lane.Path); cfg.expo() != nil && lane.Managed {
+		// Going into a lane means seeing its app: start what is not running and wait for Metro.
+		if port := cfg.expo().port(lane.Slot); !listening(port) {
+			if _, err := up(lane, nil, false); err != nil {
+				notes = append(notes, "dev servers: "+err.Error())
+			}
+			for waited := 0; waited < 90 && !listening(port); waited += 2 {
+				time.Sleep(2 * time.Second)
+			}
+			notes = append(notes, "started dev servers")
+		}
 		if message, err := pointEmulator(lane); err != nil {
 			notes = append(notes, "emulator: "+err.Error())
 		} else {

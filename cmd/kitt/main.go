@@ -12,10 +12,11 @@ const usage = `kitt — lanes for parallel work
 
   kitt dash [--workspace]        the dashboard (--workspace opens it as a herdr workspace)
   kitt new <issue|name>          a new lane: worktree, branch, linked env files, setup
-        [--agent] [--prompt t]     and an agent in it, started on the issue or your prompt
+        [--prompt t] [--no-agent]  an issue lane starts an agent on the issue; --prompt gives any lane one
         [--repo r] [--base ref] [--focus] [--no-setup]
+  kitt agent [lane] [--prompt t] start the lane's agent, or hand the running one a prompt
   kitt ls [--all] [--json]       the lanes
-  kitt focus [lane]              go into a lane: its herdr workspace, its app in the emulator
+  kitt focus [lane]              go into a lane: its herdr workspace, its dev servers, its app in the emulator
   kitt up [lane] [app...]        start the lane's dev servers on its own ports
   kitt down [lane]               stop them
   kitt emu [lane]                point the emulator at the lane's Metro
@@ -45,7 +46,7 @@ func main() {
 	commands := map[string]func([]string) error{
 		"dash": cmdDash, "new": cmdNew, "ls": cmdLs, "list": cmdLs, "focus": cmdFocus, "up": cmdUp, "down": cmdDown,
 		"emu": cmdEmu, "env": cmdEnv, "check": cmdCheck, "proof": cmdProof, "adopt": cmdAdopt, "link": cmdLink,
-		"rm": cmdRm, "repo": cmdRepo, "init": cmdInit, "doctor": cmdDoctor,
+		"rm": cmdRm, "agent": cmdAgent, "repo": cmdRepo, "init": cmdInit, "doctor": cmdDoctor,
 	}
 	command, ok := commands[os.Args[1]]
 	if !ok {

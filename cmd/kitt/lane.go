@@ -270,9 +270,9 @@ func cmdInit(args []string) error {
 // --- kitt new ----------------------------------------------------------------
 
 func cmdNew(args []string) error {
-	rest, opts := flags(args, "agent", "focus", "no-setup")
+	rest, opts := flags(args, "agent", "no-agent", "focus", "no-setup")
 	if len(rest) == 0 {
-		return fail("usage: kitt new <issue number | name> [--repo r] [--base ref] [--agent] [--prompt text] [--focus]")
+		return fail("usage: kitt new <issue number | name> [--repo r] [--base ref] [--agent | --no-agent] [--prompt text] [--focus]")
 	}
 	repo, err := findRepo(opts["repo"])
 	if err != nil {
@@ -366,38 +366,90 @@ func cmdNew(args []string) error {
 		}
 	}
 
-	if opts["agent"] != "" || opts["prompt"] != "" {
-		if workspace == "" {
-			return fail("an agent needs herdr: start one in %s yourself", path)
-		}
-		return startAgent(lane, cfg, workspace, opts["prompt"])
+	// A lane made for an issue is made to be worked on: the agent starts unless told not to.
+	wantsAgent := opts["agent"] != "" || opts["prompt"] != "" || (entry.Issue > 0 && opts["no-agent"] == "")
+	if !wantsAgent {
+		return nil
 	}
-	return nil
+	if workspace == "" {
+		return fail("an agent needs herdr: start one in %s yourself", path)
+	}
+	return startAgent(lane, cfg, opts["prompt"])
 }
 
-func startAgent(lane Lane, cfg RepoConfig, workspace string, prompt string) error {
-	panes := herdrPanes(workspace)
-	if len(panes) == 0 {
-		return fail("workspace %s has no pane to start an agent in", workspace)
+const issuePrompt = "Work on issue #{issue}: {title}. Read it first with `gh issue view {issue} --comments`. " +
+	"This checkout is a kitt lane: run `kitt env` for its ports, `kitt check` before you report, " +
+	"and when the change is visible in the app, record a proof (`kitt proof begin`, `shot`, `end`)."
+
+// startAgent puts an agent to work in a lane: it starts one in the lane's shell
+// pane unless one is already there, then hands it the prompt, or for an issue
+// lane with no prompt given, the issue.
+func startAgent(lane Lane, cfg RepoConfig, prompt string) error {
+	workspace, err := herdrOpen(lane, false)
+	if err != nil || workspace == "" {
+		return fail("could not open %s in herdr: %v", lane.Name, err)
 	}
-	name := agentName(lane.Name)
-	fmt.Printf("starting %s as %q\n", cfg.Agent.Kind, name)
-	if err := herdrTimeout(nil, 90*time.Second, "agent", "start", name, "--kind", cfg.Agent.Kind, "--pane", panes[0].PaneID, "--timeout", "60000"); err != nil {
-		return err
+
+	target := ""
+	for _, agent := range herdrAgents() {
+		if agent.WorkspaceID == workspace && within(agent.Cwd, lane.Path) {
+			target = agent.PaneID
+		}
+	}
+	if target == "" {
+		devTabs := map[string]bool{}
+		for _, tab := range herdrTabs(workspace) {
+			if strings.HasPrefix(tab.Label, "dev:") {
+				devTabs[tab.TabID] = true
+			}
+		}
+		pane := ""
+		for _, candidate := range herdrPanes(workspace) {
+			if !devTabs[candidate.TabID] {
+				pane = candidate.PaneID
+				break
+			}
+		}
+		if pane == "" {
+			return fail("workspace %s has no shell pane to start an agent in", workspace)
+		}
+		name := agentName(lane.Name)
+		fmt.Printf("starting %s as %q\n", cfg.Agent.Kind, name)
+		if err := herdrTimeout(nil, 90*time.Second, "agent", "start", name, "--kind", cfg.Agent.Kind, "--pane", pane, "--timeout", "60000"); err != nil {
+			return err
+		}
+		target = pane
 	}
 
 	if prompt == "" && lane.State != nil && lane.State.Issue > 0 {
 		prompt = cfg.Agent.Prompt
 		if prompt == "" {
-			prompt = "Work on issue #{issue}: {title} ({url}). Read the issue first. This checkout is a kitt lane with its own ports (`kitt env`). " +
-				"When the change is visible in the app, record a proof with `kitt proof` before you report back."
+			prompt = issuePrompt
 		}
 		prompt = strings.NewReplacer("{issue}", strconv.Itoa(lane.State.Issue), "{title}", lane.State.Title, "{url}", lane.State.URL).Replace(prompt)
 	}
 	if prompt == "" {
+		fmt.Printf("agent ready in %s\n", lane.Name)
 		return nil
 	}
-	return herdr(nil, "agent", "prompt", name, prompt)
+	if err := herdr(nil, "agent", "prompt", target, prompt); err != nil {
+		return err
+	}
+	fmt.Printf("agent in %s is on it\n", lane.Name)
+	return nil
+}
+
+// cmdAgent starts (or prompts) the agent of an existing lane.
+func cmdAgent(args []string) error {
+	rest, opts := flags(args)
+	lane, err := findLane(strings.Join(rest, ""))
+	if err != nil {
+		return err
+	}
+	if !hasHerdr() {
+		return fail("an agent needs herdr")
+	}
+	return startAgent(lane, loadRepoConfig(lane.Main, lane.Path), opts["prompt"])
 }
 
 // linkFiles gives a lane the gitignored files of the main checkout as symlinks,
