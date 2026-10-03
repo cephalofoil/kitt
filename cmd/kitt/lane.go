@@ -660,10 +660,33 @@ func removeWorktree(lane Lane, force bool) error {
 	if lane.IsMain || norm(lane.Path) == norm(lane.Main) || within(lane.Main, lane.Path) {
 		return gitErr
 	}
-	if err := os.RemoveAll(lane.Path); err != nil {
-		return fail("could not delete %s: %v", lane.Path, err)
+	if err := deleteTree(lane.Path); err != nil {
+		return err
 	}
 	_, _ = run(lane.Main, "git", "worktree", "prune")
+	return nil
+}
+
+// deleteTree deletes a directory. A process that still has a folder of it as
+// its working directory (a shell left open there) keeps Windows from removing
+// that empty folder; nothing of the lane is in it any more, so that is said
+// and not treated as a failure.
+func deleteTree(path string) error {
+	err := os.RemoveAll(path)
+	if err == nil {
+		return nil
+	}
+	files := 0
+	_ = filepath.WalkDir(path, func(_ string, entry os.DirEntry, walkErr error) error {
+		if walkErr == nil && !entry.IsDir() {
+			files++
+		}
+		return nil
+	})
+	if files > 0 {
+		return fail("could not delete %s (%d files left): %v", path, files, err)
+	}
+	fmt.Printf("an empty folder stays at %s: a process still has it open; it goes once that process ends\n", path)
 	return nil
 }
 
@@ -684,8 +707,8 @@ func removeLeftover(name string) string {
 		if !within(entry.Path, cfg.lanesDir(repo.Path)) || norm(entry.Path) == norm(cfg.lanesDir(repo.Path)) {
 			return ""
 		}
-		if err := os.RemoveAll(entry.Path); err != nil {
-			return fmt.Sprintf("could not delete %s: %v", entry.Path, err)
+		if err := deleteTree(entry.Path); err != nil {
+			return err.Error()
 		}
 		_, _ = run(repo.Path, "git", "worktree", "prune")
 		_ = updateState(func(s *State) { delete(s.Lanes, key) })
