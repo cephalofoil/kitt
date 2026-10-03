@@ -376,8 +376,35 @@ func (d dash) View() string {
 	default:
 		b.WriteString("\n")
 	}
-	b.WriteString("\n  " + dim.Render("enter open · g agent · e emulator · u up · d down · c check · p proof · n new · x remove · q quit") + "\n")
+	b.WriteString("\n" + legend(width))
 
+	return b.String()
+}
+
+// legend lists every key, wrapped to the pane: a narrow split must not cut one off.
+func legend(width int) string {
+	keys := [][2]string{
+		{"enter", "open lane"}, {"e", "emulator"}, {"g", "agent"}, {"u", "up"}, {"d", "down"}, {"c", "check"},
+		{"p", "proof"}, {"n", "new"}, {"a", "adopt"}, {"x", "remove"}, {"t", "all worktrees"}, {"q", "quit"},
+	}
+	var b strings.Builder
+	line := 2
+	b.WriteString("  ")
+	for i, key := range keys {
+		item := len([]rune(key[0])) + 1 + len([]rune(key[1]))
+		if i > 0 {
+			if line+3+item > width-2 {
+				b.WriteString("\n  ")
+				line = 2
+			} else {
+				b.WriteString(dim.Render(" · "))
+				line += 3
+			}
+		}
+		b.WriteString(accent.Render(key[0]) + " " + dim.Render(key[1]))
+		line += item
+	}
+	b.WriteString("\n  " + green.Render("▲") + dim.Render(" dev servers up · ") + cyan.Render("▣") + dim.Render(" in the emulator") + "\n")
 	return b.String()
 }
 

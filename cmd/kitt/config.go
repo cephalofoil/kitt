@@ -65,6 +65,7 @@ type App struct {
 	PortEnv  string            `toml:"port_env"`
 	Shared   bool              `toml:"shared"`
 	Dev      string            `toml:"dev"`
+	Stop     string            `toml:"stop"`
 	EnvFiles []string          `toml:"env_files"`
 	Env      map[string]string `toml:"env"`
 	Setup    []string          `toml:"setup"`

@@ -608,6 +608,9 @@ func cmdRm(args []string) error {
 		}
 	}
 
+	// Whatever the lane started (a container on its port) goes before its directory does.
+	down(lane)
+
 	// The linked files are symlinks into the main checkout: take the links away
 	// first so no removal can follow one.
 	for _, rel := range cfg.Link {
@@ -617,7 +620,7 @@ func cmdRm(args []string) error {
 		}
 	}
 
-	if ws := herdrWorkspaceOf(lane.Main)[lane.key()]; ws != "" {
+	if ws :=herdrWorkspaceOf(lane.Main)[lane.key()]; ws != "" {
 		_ = herdr(nil, "workspace", "close", ws)
 	}
 	removal := []string{"worktree", "remove", lane.Path}
