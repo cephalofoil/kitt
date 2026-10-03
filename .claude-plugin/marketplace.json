@@ -1,0 +1,13 @@
+{
+  "name": "kitt",
+  "owner": {
+    "name": "cephalofoil"
+  },
+  "plugins": [
+    {
+      "name": "pr-watch",
+      "source": "./pr-watch",
+      "description": "PR checks, uncommitted work and rebase state above the prompt"
+    }
+  ]
+}
