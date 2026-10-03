@@ -116,6 +116,7 @@ async function loadGit($: EngineInterface): Promise<PrWatchGit | null> {
 
   return {
     branch,
+    head,
     modified: status.length - untracked,
     untracked,
     behind,
@@ -289,6 +290,31 @@ async function browse($: EngineInterface, pr: PrWatchSnapshot) {
   await run($, ['gh', 'pr', 'view', String(pr.number), '--web'])
 }
 
+/** Leaves a merged branch for the default one, brought up to the remote's tip. */
+async function switchToBase($: EngineInterface, git: PrWatchGit) {
+  const name = git.base.replace(/^origin\//, '')
+  const why = (ran: { stderr: string } | null) => (ran?.stderr ?? 'git did not answer').trim().split('\n')[0]
+
+  await run($, ['git', 'fetch', '--quiet', 'origin', name], 30_000)
+
+  const moved = await run($, ['git', 'switch', name])
+
+  if (moved?.exitCode !== 0) {
+    $.ui.toast(`Switch refused: ${why(moved)}`, { timeoutMs: 8000 })
+
+    return
+  }
+
+  const pulled = await run($, ['git', 'merge', '--ff-only', git.base])
+
+  $.ui.toast(
+    pulled?.exitCode === 0 ? `On ${name}, level with ${git.base}` : `On ${name}, not fast-forwarded: ${why(pulled)}`,
+    { timeoutMs: 8000 },
+  )
+  await refreshGit($)
+  await refreshPr($)
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -376,10 +402,13 @@ export const register: Register = on => {
       now !== 'merged' && now !== 'closed' && (await read($, hiddenPr)) !== keyOf(pr)
     const dirty = git === null ? 0 : git.modified + git.untracked
     const hasPush = git !== null && dirty === 0 && (git.unpushed ?? 0) > 0
+    // The branch's PR is merged and nothing was committed since: the branch is done.
+    const isDone =
+      pr !== null && git !== null && pr.state === 'MERGED' && pr.branch === git.branch && pr.headSha === git.head
     const hasRebase =
-      git !== null && git.behind > 0 && `origin/${git.branch}` !== git.base && (await read($, hiddenRebase)) !== git.baseSha
+      !isDone && git !== null && git.behind > 0 && `origin/${git.branch}` !== git.base && (await read($, hiddenRebase)) !== git.baseSha
 
-    if (!hasPr && dirty === 0 && !hasPush && !hasRebase) return next(e)
+    if (!hasPr && !isDone && dirty === 0 && !hasPush && !hasRebase) return next(e)
 
     const { Box, Button, Text } = $.ui.resolve(e)
     const width = Math.max(30, e.props.bodyColumns)
@@ -479,6 +508,24 @@ export const register: Register = on => {
                 await $.prompt.submit({ text: PUSH, asUser: true })
               }}
             />
+          </Box>
+        )}
+        {isDone && (
+          <Box columnGap={1}>
+            <Text bold color="magenta">✓ PR #{pr.number} merged</Text>
+            <Text dimColor>· this branch is done</Text>
+            <Text> </Text>
+            {dirty === 0 ? (
+              <Button
+                key="switch"
+                plain
+                hotkey="m"
+                label={`Switch to ${git.base.replace(/^origin\//, '')}`}
+                onPress={() => switchToBase($, git)}
+              />
+            ) : (
+              <Text dimColor>commit or stash first to switch</Text>
+            )}
           </Box>
         )}
         {hasRebase && (

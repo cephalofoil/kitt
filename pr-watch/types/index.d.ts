@@ -26,6 +26,7 @@ export type PrWatchSnapshot = {
 
 export type PrWatchGit = {
   branch: string
+  head: string
   modified: number
   untracked: number
   /** Commits the branch lacks from the remote's default branch, and has on top of it. */
