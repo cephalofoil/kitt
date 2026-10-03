@@ -37,9 +37,12 @@ type dash struct {
 	noteAt time.Time
 	busy   string
 
-	// mode is "", "new", "new-agent" or "remove".
+	// mode is "", "new", "remove" or "force".
 	mode  string
 	input string
+	// held is the lane a refused removal named, and why it was refused.
+	held   string
+	reason string
 }
 
 type (
@@ -137,6 +140,12 @@ func (d dash) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case doneMsg:
 		d.busy, d.note, d.noteAt = "", string(msg), time.Now()
+		// A removal kitt refused holds unsaved work: ask a second time, differently.
+		if text := string(msg); d.held != "" && strings.Contains(text, "--force") {
+			d.mode, d.reason = "force", strings.TrimPrefix(strings.Split(text, " (pass --force")[0], "kitt: ")
+		} else {
+			d.held = ""
+		}
 		return d, load
 
 	case tea.KeyMsg:
@@ -246,7 +255,8 @@ func (d dash) typed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEnter:
 		mode, input := d.mode, strings.TrimSpace(d.input)
 		d.mode = ""
-		if mode == "remove" || input == "" {
+		if mode == "remove" || mode == "force" || input == "" {
+			d.held = ""
 			return d, nil
 		}
 		args := []string{"new", input, "--repo", repo}
@@ -267,8 +277,17 @@ func (d dash) typed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			row := rows[d.cursor]
 			d.mode = ""
 			if msg.String() == "y" {
-				d.busy = "removing " + row.Name
-				return d, self("rm", row.Repo+"/"+row.Name)
+				d.busy, d.held = "removing "+row.Name, row.Repo+"/"+row.Name
+				return d, self("rm", d.held)
+			}
+			return d, nil
+		}
+		if d.mode == "force" {
+			target := d.held
+			d.mode, d.held = "", ""
+			if msg.String() == "D" {
+				d.busy = "deleting " + target
+				return d, self("rm", target, "--force")
 			}
 			return d, nil
 		}
@@ -369,6 +388,8 @@ func (d dash) View() string {
 		b.WriteString("  " + accent.Render(what) + dim.Render(" · an issue number starts an agent on it, a name only makes the lane: ") + d.input + "▏\n")
 	case d.mode == "remove" && d.cursor < len(rows):
 		b.WriteString("  " + red.Render("remove "+rows[d.cursor].Name+"?") + dim.Render(" y removes the worktree · any other key keeps it") + "\n")
+	case d.mode == "force":
+		b.WriteString("  " + red.Render(d.reason) + dim.Render(" · ") + red.Render("D") + dim.Render(" deletes it and everything unsaved in it · any other key keeps it") + "\n")
 	case d.busy != "":
 		b.WriteString("  " + yellow.Render("… "+d.busy) + "\n")
 	case d.note != "" && time.Since(d.noteAt) < 20*time.Second:

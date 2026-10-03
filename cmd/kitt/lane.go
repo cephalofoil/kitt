@@ -594,6 +594,10 @@ func cmdRm(args []string) error {
 	}
 	lane, err := findLane(rest[0])
 	if err != nil {
+		if cleaned := removeLeftover(rest[0]); cleaned != "" {
+			fmt.Println(cleaned)
+			return nil
+		}
 		return err
 	}
 	if lane.IsMain {
@@ -620,14 +624,10 @@ func cmdRm(args []string) error {
 		}
 	}
 
-	if ws :=herdrWorkspaceOf(lane.Main)[lane.key()]; ws != "" {
+	if ws := herdrWorkspaceOf(lane.Main)[lane.key()]; ws != "" {
 		_ = herdr(nil, "workspace", "close", ws)
 	}
-	removal := []string{"worktree", "remove", lane.Path}
-	if force {
-		removal = append(removal, "--force")
-	}
-	if _, err := runTimeout(lane.Main, 60*time.Second, "git", removal...); err != nil {
+	if err := removeWorktree(lane, force); err != nil {
 		return err
 	}
 	_ = updateState(func(s *State) { delete(s.Lanes, lane.key()) })
@@ -641,6 +641,60 @@ func cmdRm(args []string) error {
 	}
 	fmt.Printf("removed %s and its branch\n", lane.Name)
 	return nil
+}
+
+// removeWorktree takes a lane's checkout away. Git does it when it can; on
+// Windows it gives up on the long paths inside node_modules, and then the
+// directory is deleted directly and git's record of it pruned.
+func removeWorktree(lane Lane, force bool) error {
+	removal := []string{"worktree", "remove", lane.Path}
+	if force {
+		removal = append(removal, "--force")
+	}
+	_, gitErr := runTimeout(lane.Main, 120*time.Second, "git", removal...)
+	if gitErr == nil && !exists(lane.Path) {
+		return nil
+	}
+
+	// Only ever a worktree of this repo, never the repo itself.
+	if lane.IsMain || norm(lane.Path) == norm(lane.Main) || within(lane.Main, lane.Path) {
+		return gitErr
+	}
+	if err := os.RemoveAll(lane.Path); err != nil {
+		return fail("could not delete %s: %v", lane.Path, err)
+	}
+	_, _ = run(lane.Main, "git", "worktree", "prune")
+	return nil
+}
+
+// removeLeftover finishes a removal git only half did: the worktree is gone
+// from git, but its directory and kitt's entry for it are still there.
+func removeLeftover(name string) string {
+	state := loadState()
+	for key, entry := range state.Lanes {
+		if entry.Name != name && entry.Repo+"/"+entry.Name != name {
+			continue
+		}
+		repo, err := findRepo(entry.Repo)
+		if err != nil {
+			return ""
+		}
+		cfg := loadRepoConfig(repo.Path, "")
+		// Only a directory under the repo's lanes folder is ever deleted this way.
+		if !within(entry.Path, cfg.lanesDir(repo.Path)) || norm(entry.Path) == norm(cfg.lanesDir(repo.Path)) {
+			return ""
+		}
+		if err := os.RemoveAll(entry.Path); err != nil {
+			return fmt.Sprintf("could not delete %s: %v", entry.Path, err)
+		}
+		_, _ = run(repo.Path, "git", "worktree", "prune")
+		_ = updateState(func(s *State) { delete(s.Lanes, key) })
+		if _, err := run(repo.Path, "git", "branch", "-d", cfg.BranchPrefix+entry.Name); err != nil {
+			return fmt.Sprintf("removed what was left of %s; its branch is kept", entry.Name)
+		}
+		return fmt.Sprintf("removed what was left of %s and its branch", entry.Name)
+	}
+	return ""
 }
 
 // unsafeToRemove says why a lane still holds work that exists nowhere else.
