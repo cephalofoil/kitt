@@ -41,6 +41,11 @@ func pointEmulator(lane Lane) (string, error) {
 	if !lane.Managed {
 		return "", fail("%s is not a lane yet: kitt adopt %s", lane.Name, lane.Name)
 	}
+	// A running proof owns the emulator: loading another lane over it would spoil its shots.
+	var held emuLock
+	if readJSON(lockPath(), &held) == nil && held.Lane != lane.key() && time.Since(held.At) < lockStale {
+		return "", fail("the emulator is recording a proof for %s (since %s): wait for it, or end it with `kitt proof end`", held.Name, ago(held.At))
+	}
 	port := app.port(lane.Slot)
 	if !listening(port) {
 		return "", fail("Metro of %s is not running on %d: kitt up %s", lane.Name, port, lane.Name)
