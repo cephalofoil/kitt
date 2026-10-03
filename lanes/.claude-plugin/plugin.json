@@ -1,0 +1,8 @@
+{
+  "name": "lanes",
+  "version": "0.1.0",
+  "description": "Teaches an agent to work in a kitt lane: its ports, its checks, and how to prove a change in the shared emulator.",
+  "author": {
+    "name": "cephalofoil"
+  }
+}

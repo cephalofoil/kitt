@@ -8,6 +8,14 @@
       "name": "pr-watch",
       "source": "./pr-watch",
       "description": "PR checks, uncommitted work and rebase state above the prompt"
+    },
+    {
+      "name": "lanes",
+      "source": "./lanes",
+      "description": "The agent side of kitt lanes: ports, checks, proof"
     }
-  ]
+  ],
+  "metadata": {
+    "description": "Mods and skills for parallel dev work with kitt"
+  }
 }

@@ -1,0 +1,315 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+// PR is the pull request of a lane's branch, as far as a dashboard row needs it.
+type PR struct {
+	Number int
+	Title  string
+	State  string
+	Head   string
+	Draft  bool
+	// Checks is pass, fail, running, or empty when the PR reports none.
+	Checks string
+}
+
+// LaneView is a lane with everything read live: its work tree, its agent, its
+// PR, which of its apps answer.
+type LaneView struct {
+	Lane
+	Dirty      int
+	Ahead      int
+	Behind     int
+	Agent      string
+	AgentPane  string
+	Workspace  string
+	PR         *PR
+	Up         []string
+	Down       []string
+	InEmulator bool
+}
+
+type prCache struct {
+	at  time.Time
+	prs map[string]*PR
+}
+
+var (
+	prMu    sync.Mutex
+	prByDir = map[string]prCache{}
+)
+
+// prsOf reads a repo's recent pull requests in one call, keyed by head branch,
+// and keeps them for a while: the dashboard asks every few seconds.
+func prsOf(repoPath string, maxAge time.Duration) map[string]*PR {
+	prMu.Lock()
+	defer prMu.Unlock()
+
+	if cached, ok := prByDir[repoPath]; ok && time.Since(cached.at) < maxAge {
+		return cached.prs
+	}
+
+	out, err := runTimeout(repoPath, 20*time.Second, "gh", "pr", "list", "--state", "all", "--limit", "60",
+		"--json", "number,title,state,isDraft,headRefName,headRefOid,statusCheckRollup")
+	prs := map[string]*PR{}
+	if err != nil {
+		if cached, ok := prByDir[repoPath]; ok {
+			return cached.prs
+		}
+		return prs
+	}
+
+	var list []struct {
+		Number int    `json:"number"`
+		Title  string `json:"title"`
+		State  string `json:"state"`
+		Draft  bool   `json:"isDraft"`
+		Branch string `json:"headRefName"`
+		Head   string `json:"headRefOid"`
+		Rollup []struct {
+			Status     string `json:"status"`
+			Conclusion string `json:"conclusion"`
+			State      string `json:"state"`
+		} `json:"statusCheckRollup"`
+	}
+	_ = json.Unmarshal([]byte(out), &list)
+
+	for _, item := range list {
+		// gh lists newest first: the first PR seen for a branch is its current one.
+		if _, seen := prs[item.Branch]; seen {
+			continue
+		}
+		pr := &PR{Number: item.Number, Title: item.Title, State: item.State, Head: item.Head, Draft: item.Draft}
+		for _, check := range item.Rollup {
+			switch {
+			case check.Conclusion == "FAILURE" || check.Conclusion == "TIMED_OUT" || check.Conclusion == "CANCELLED" || check.State == "FAILURE" || check.State == "ERROR":
+				pr.Checks = "fail"
+			case check.Status != "" && check.Status != "COMPLETED" || check.State == "PENDING":
+				if pr.Checks != "fail" {
+					pr.Checks = "running"
+				}
+			default:
+				if pr.Checks == "" {
+					pr.Checks = "pass"
+				}
+			}
+		}
+		prs[item.Branch] = pr
+	}
+
+	prByDir[repoPath] = prCache{at: time.Now(), prs: prs}
+	return prs
+}
+
+func prOf(repoPath, branch string) *PR {
+	return prsOf(repoPath, time.Minute)[branch]
+}
+
+// agentRank orders herdr's agent states by how much they want the person.
+var agentRank = map[string]int{"blocked": 5, "done": 4, "working": 3, "idle": 2, "unknown": 1}
+
+// views reads every lane of every registered repo. `withPRs` false skips GitHub.
+func views(withPRs bool) []LaneView {
+	state := loadState()
+	agents := herdrAgents()
+	var out []LaneView
+
+	for _, repo := range loadGlobal().Repos {
+		lanes := lanesOf(repo, state)
+		cfg := loadRepoConfig(repo.Path, "")
+		open := herdrWorkspaceOf(repo.Path)
+		var prs map[string]*PR
+		if withPRs {
+			prs = prsOf(repo.Path, 45*time.Second)
+		}
+
+		rows := make([]LaneView, len(lanes))
+		var wg sync.WaitGroup
+		for i, lane := range lanes {
+			rows[i] = LaneView{Lane: lane, Workspace: open[lane.key()]}
+			if !lane.Managed {
+				continue
+			}
+			wg.Add(1)
+			go func(view *LaneView) {
+				defer wg.Done()
+				if status, err := run(view.Path, "git", "status", "--porcelain"); err == nil && status != "" {
+					view.Dirty = len(strings.Split(status, "\n"))
+				}
+				if counts, err := run(view.Path, "git", "rev-list", "--left-right", "--count", "HEAD...origin/"+cfg.Base); err == nil {
+					fields := strings.Fields(counts)
+					if len(fields) == 2 {
+						view.Ahead, _ = strconv.Atoi(fields[0])
+						view.Behind, _ = strconv.Atoi(fields[1])
+					}
+				}
+				for _, app := range cfg.Apps {
+					if app.Port == 0 || app.Dev == "" {
+						continue
+					}
+					if listening(app.port(view.Slot)) {
+						view.Up = append(view.Up, app.Name)
+					} else {
+						view.Down = append(view.Down, app.Name)
+					}
+				}
+			}(&rows[i])
+		}
+		wg.Wait()
+
+		for i := range rows {
+			view := &rows[i]
+			// An agent belongs to the lane whose path is the longest prefix of its cwd.
+			for _, agent := range agents {
+				if !within(agent.Cwd, view.Path) || ownedByDeeper(agent.Cwd, view.Path, lanes) {
+					continue
+				}
+				if agentRank[agent.Status] > agentRank[view.Agent] {
+					view.Agent, view.AgentPane = agent.Status, agent.PaneID
+				}
+			}
+			if view.Branch != "" && view.Branch != cfg.Base {
+				view.PR = prs[view.Branch]
+			}
+			view.InEmulator = state.Emulator != nil && state.Emulator.Lane == view.key()
+		}
+		out = append(out, rows...)
+	}
+
+	return out
+}
+
+func ownedByDeeper(cwd, path string, lanes []Lane) bool {
+	for _, other := range lanes {
+		if len(other.Path) > len(path) && within(cwd, other.Path) {
+			return true
+		}
+	}
+	return false
+}
+
+// --- kitt ls / env -----------------------------------------------------------
+
+func cmdLs(args []string) error {
+	_, opts := flags(args, "json", "all")
+	rows := views(true)
+
+	if opts["json"] != "" {
+		type row struct {
+			Repo, Name, Path, Branch, Agent string
+			Slot, Dirty, Ahead, Behind      int
+			Managed, InEmulator             bool
+			PR                              *PR
+			Checks                          *CheckResult
+			Proof                           *ProofState
+		}
+		var list []row
+		for _, v := range rows {
+			item := row{Repo: v.Repo, Name: v.Name, Path: v.Path, Branch: v.Branch, Agent: v.Agent, Slot: v.Slot,
+				Dirty: v.Dirty, Ahead: v.Ahead, Behind: v.Behind, Managed: v.Managed, InEmulator: v.InEmulator, PR: v.PR}
+			if v.State != nil {
+				item.Checks, item.Proof = v.State.Checks, v.State.Proof
+			}
+			list = append(list, item)
+		}
+		return json.NewEncoder(os.Stdout).Encode(list)
+	}
+
+	unmanaged := 0
+	for _, v := range rows {
+		if !v.Managed && opts["all"] == "" {
+			unmanaged++
+			continue
+		}
+		fmt.Println(plainRow(v))
+	}
+	if unmanaged > 0 {
+		fmt.Printf("+ %d other worktrees (kitt ls --all; kitt adopt <name> makes one a lane)\n", unmanaged)
+	}
+	return nil
+}
+
+func plainRow(v LaneView) string {
+	parts := []string{fmt.Sprintf("%-28s", v.Repo+"/"+v.Name)}
+	if v.Agent != "" {
+		parts = append(parts, fmt.Sprintf("%-8s", v.Agent))
+	} else {
+		parts = append(parts, fmt.Sprintf("%-8s", "-"))
+	}
+	git := ""
+	if v.Dirty > 0 {
+		git += fmt.Sprintf("±%d ", v.Dirty)
+	}
+	if v.Behind > 0 {
+		git += fmt.Sprintf("↓%d ", v.Behind)
+	}
+	parts = append(parts, fmt.Sprintf("%-9s", git))
+	parts = append(parts, fmt.Sprintf("%-14s", prText(v)))
+	parts = append(parts, fmt.Sprintf("%-10s", proofText(v)))
+	if v.InEmulator {
+		parts = append(parts, "emulator")
+	}
+	return strings.TrimRight(strings.Join(parts, " "), " ")
+}
+
+func prText(v LaneView) string {
+	if v.PR == nil {
+		return "-"
+	}
+	mark := map[string]string{"pass": "✓", "fail": "✗", "running": "●", "": ""}[v.PR.Checks]
+	switch v.PR.State {
+	case "MERGED":
+		return fmt.Sprintf("#%d merged", v.PR.Number)
+	case "CLOSED":
+		return fmt.Sprintf("#%d closed", v.PR.Number)
+	}
+	return strings.TrimSpace(fmt.Sprintf("#%d %s", v.PR.Number, mark))
+}
+
+func proofText(v LaneView) string {
+	if v.State == nil || v.State.Proof == nil {
+		return "-"
+	}
+	proof := v.State.Proof
+	switch proof.Status {
+	case "running":
+		return "proof …"
+	case "pass":
+		if proof.Commit != v.Head {
+			return "proof stale"
+		}
+		return "proof ✓"
+	case "fail":
+		return "proof ✗"
+	}
+	return "-"
+}
+
+// cmdEnv prints what a lane's processes should know: its ports, by app. An
+// agent reads this instead of guessing 8081.
+func cmdEnv(args []string) error {
+	rest, _ := flags(args)
+	lane, err := findLane(strings.Join(rest, ""))
+	if err != nil {
+		return err
+	}
+	if !lane.Managed {
+		return fail("%s is not a lane yet: kitt adopt %s", lane.Name, lane.Name)
+	}
+	cfg := loadRepoConfig(lane.Main, lane.Path)
+	fmt.Printf("KITT_LANE=%s\nKITT_SLOT=%d\nKITT_ROOT=%s\n", lane.Name, lane.Slot, lane.Path)
+	for _, app := range cfg.Apps {
+		if app.Port > 0 {
+			fmt.Printf("KITT_PORT_%s=%d\n", strings.ToUpper(strings.ReplaceAll(app.Name, "-", "_")), app.port(lane.Slot))
+		}
+	}
+	return nil
+}
