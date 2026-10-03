@@ -48,8 +48,6 @@ declare module 'claude-code' {
       git: PrWatchGit | null
       hiddenPr: string | null
       hiddenRebase: string | null
-      /** The head a plain push was refused for: the remote branch holds other commits. */
-      rejected: string | null
       isLoaded: boolean
     }
   }

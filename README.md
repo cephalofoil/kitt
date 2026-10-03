@@ -102,16 +102,23 @@ Proofs are kept under kitt's own folder (`%APPDATA%\kitt\proofs`), outside the r
 
 ## pr-watch
 
-Shown above the prompt, only when there is something to act on. A key either acts at once or sends Claude a few words, with the how-to attached where only Claude reads it.
+Shown above the prompt, only when there is something to act on.
 
-| Shown | Key | What it does |
+A key never runs git itself. It sends Claude a few words, with the how-to attached where only Claude reads it. Claude decides whether and how to act and calls one of the mod's tools; the tool does the fixed steps and answers with what happened. So every action is a real tool call in the transcript that Claude can decline, redo with other arguments, or react to.
+
+| Shown | Key | What happens |
 |---|---|---|
 | the open PR: status, issue, one chip per check, the failing step and log lines | `1` `2` `3` `x` | retry failed jobs · hand the log to Claude · open in browser · hide |
-| uncommitted work | `c` | Claude commits it, following the repo's commit conventions; no push |
-| commits not pushed, no PR yet | `p` | Claude runs the repo's checks, pushes and opens the PR |
-| commits not pushed, PR open | `p` | pushes, at once; a refused push offers `f` to force-push with lease |
-| behind the default branch, rebase is clean | `b` | rebases and pushes with lease, at once; undone if it fails |
-| behind, rebase would conflict | `b` | Claude rebases, asks where a conflict is not clear, then pushes |
-| the PR is merged | `m` | switches to the default branch, brought up to date |
+| uncommitted work | `c` | Claude writes the message the repo asks for and calls `commit`; no push |
+| commits not pushed, no PR yet | `p` | Claude runs the repo's checks, calls `push`, opens the PR |
+| commits not pushed, PR open | `p` | Claude calls `push` |
+| behind the default branch | `b` | Claude calls `rebase_and_push`; on conflicts it rebases by hand and asks where a conflict is not clear |
+| the PR is merged | `m` | switches to the default branch, brought up to date (done by the mod; Claude is told) |
+
+The tools, as Claude sees them:
+
+- `mcp__pr-watch__commit` `{ subject, body?, paths? }`: stages and commits. Refuses on the default branch. Never pushes.
+- `mcp__pr-watch__push` `{ force_with_lease? }`: pushes. A refused push answers with the commits the remote holds; forcing then overwrites exactly those.
+- `mcp__pr-watch__rebase_and_push`: rebases onto the default branch and pushes with lease. A conflicting rebase is undone and answered with the files.
 
 The branch name sits at the end of the hint line. `/pr-watch` opens the full view of the PR. Keys work once the band has focus (click it, or ctrl+x tab).
