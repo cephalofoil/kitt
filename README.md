@@ -102,12 +102,16 @@ Proofs are kept under kitt's own folder (`%APPDATA%\kitt\proofs`), outside the r
 
 ## pr-watch
 
-Shown above the prompt, only when there is something to act on:
+Shown above the prompt, only when there is something to act on. A key either acts at once or sends Claude a few words, with the how-to attached where only Claude reads it.
 
-- the branch's open PR: status, issue title, one chip per check, the failing step and log lines; `1` retry failed, `2` hand the log to Claude, `3` open in browser, `x` hide
-- uncommitted work, with `c` to commit and push following the repo's own conventions
-- unpushed commits, with `p` to push
-- commits behind the default branch and whether a rebase would conflict, with `b` to rebase
-- a merged PR, with `m` to switch to the default branch
+| Shown | Key | What it does |
+|---|---|---|
+| the open PR: status, issue, one chip per check, the failing step and log lines | `1` `2` `3` `x` | retry failed jobs · hand the log to Claude · open in browser · hide |
+| uncommitted work | `c` | Claude commits it, following the repo's commit conventions; no push |
+| commits not pushed, no PR yet | `p` | Claude runs the repo's checks, pushes and opens the PR |
+| commits not pushed, PR open | `p` | pushes, at once; a refused push offers `f` to force-push with lease |
+| behind the default branch, rebase is clean | `b` | rebases and pushes with lease, at once; undone if it fails |
+| behind, rebase would conflict | `b` | Claude rebases, asks where a conflict is not clear, then pushes |
+| the PR is merged | `m` | switches to the default branch, brought up to date |
 
 The branch name sits at the end of the hint line. `/pr-watch` opens the full view of the PR. Keys work once the band has focus (click it, or ctrl+x tab).

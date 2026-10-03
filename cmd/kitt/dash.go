@@ -499,7 +499,7 @@ func proofCell(row LaneView, width int) string {
 			if len(row.State.Checks.Failed) > 0 {
 				text = "checks ✗"
 			}
-			if row.State.Checks.Commit != row.Head {
+			if row.State.Checks.Tree != row.Tree {
 				text += "?"
 			}
 		}

@@ -103,7 +103,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(await band.find({ type: 'Text', text: /API — Tests › Run tests/ })).toBeDefined()
     expect(await band.find({ type: 'Text', text: /test_service_db_usage/ })).toBeDefined()
     expect(await band.find({ type: 'Text', text: /3 uncommitted/ })).toBeDefined()
-    expect(await band.find({ type: 'Text', text: /2 modified, 1 new · ↑ 1 unpushed/ })).toBeDefined()
+    expect(await band.find({ type: 'Text', text: /2 modified, 1 new · ↑ 1 not pushed/ })).toBeDefined()
     expect(await band.find({ type: 'Text', text: /3 behind main/ })).toBeDefined()
     expect(await band.find({ type: 'Text', text: /conflicts likely in 3 files: a\.tsx, b\.py, …/ })).toBeDefined()
 
@@ -111,10 +111,10 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(ran).toContain('gh run rerun 11 --failed')
 
     await band.press({ key: 'commit' })
-    expect(sent.at(-1)).toMatch(/Commit all uncommitted changes and push/)
+    expect(sent.at(-1)).toBe('Commit my changes.')
 
     await band.press({ key: 'rebase' })
-    expect(sent.at(-1)).toMatch(/Rebase this branch onto the latest origin\/main/)
+    expect(sent.at(-1)).toBe('Rebase and push this branch onto origin/main.')
 
     await band.press({ key: 'hide-pr' })
     await band.press({ key: 'hide-rebase' })

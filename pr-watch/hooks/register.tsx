@@ -12,20 +12,54 @@ const TICK_MS = 15_000
 const IDLE_TICKS = 4
 const FETCH_TICKS = 20
 
-const COMMIT =
-  'Commit all uncommitted changes and push this branch. Before you write the message, read what this repo ' +
-  'asks of a commit (AGENTS.md, CLAUDE.md, the subjects in `git log`, the issue this branch works on) and ' +
-  'follow it. If the changes are clearly several unrelated things, make one commit each. On the default branch, ' +
-  'create a branch first. Do not open a PR.'
-const PUSH = 'Push this branch to its remote. Tell me first if that would need a force-push.'
-const rebaseAsk = (base: string): string =>
-  `Rebase this branch onto the latest ${base} (fetch first) and resolve conflicts if there are any. ` +
-  'Do not push; tell me if the branch needs a force-push afterwards.'
+// What a key sends is a few words the person reads in the transcript. How to do
+// it rides along as context only the model reads, so Claude does it with its
+// own tools and its own judgement, and can stop when something is off.
+const ASK = {
+  commit: 'Commit my changes.',
+  ship: 'Push this branch and open a PR.',
+  push: 'Push this branch.',
+  rebase: 'Rebase and push this branch onto ',
+} as const
+
+const HOW = {
+  commit:
+    'Sent by the Commit key of the pr-watch band. Commit the uncommitted changes of this checkout now, without asking first. ' +
+    'Follow what this repo asks of a commit: AGENTS.md, CLAUDE.md, the subjects in `git log`, the issue the branch works on. ' +
+    'One commit per unrelated change. On the default branch, create a branch first. Do not push and do not open a PR. ' +
+    'If something should not be committed (a secret, generated junk, work that is visibly broken), stop and say what and why instead. ' +
+    'Answer with the commit subject and nothing else.',
+  ship:
+    'Sent by the Push & open PR key of the pr-watch band. First run the repo\'s own checks for what changed: `kitt check` when the ' +
+    'repo has a kitt.toml, otherwise the checks AGENTS.md or CLAUDE.md name. If a check fails, stop and report it; do not push. ' +
+    'If the branch is behind the default branch, rebase it first. Then push with upstream set and open a PR against the default ' +
+    'branch, following the repo\'s PR conventions: title style, the sections its instructions ask for, the issue it closes. ' +
+    'If `kitt proof status` shows a proof for this lane, say in the PR body what it shows. Never force-push without asking. ' +
+    'Answer with the PR link and one line on the checks.',
+  push:
+    'Sent by the Push key of the pr-watch band. Push the branch to its remote. If that needs a force-push, stop and ask.',
+  rebase:
+    'Sent by the Rebase key of the pr-watch band, because a plain rebase would conflict. To the person, Rebase means: rebased and ' +
+    'pushed. Fetch first and rebase onto the latest of that branch. Resolve each conflict only where the right result is clear from ' +
+    'both sides; where it is not, stop with the rebase still open and ask, naming the file and the two versions. Once the rebase is ' +
+    'through and the repo\'s checks for the touched apps pass, push with --force-with-lease if the branch was pushed before: the ' +
+    'key press is the approval for that push, on this branch only. Answer in two lines: what conflicted and how it was resolved.',
+} as const
+
+function howFor(asked: string): string | null {
+  if (asked === ASK.commit) return HOW.commit
+  if (asked === ASK.ship) return HOW.ship
+  if (asked === ASK.push) return HOW.push
+  if (asked.startsWith(ASK.rebase)) return HOW.rebase
+
+  return null
+}
 
 const snapshot = atom({ plugin: 'pr-watch', key: 'snapshot' } as const, null)
 const gitState = atom({ plugin: 'pr-watch', key: 'git' } as const, null)
 const hiddenPr = atom({ plugin: 'pr-watch', key: 'hiddenPr' } as const, null)
 const hiddenRebase = atom({ plugin: 'pr-watch', key: 'hiddenRebase' } as const, null)
+const rejected = atom({ plugin: 'pr-watch', key: 'rejected' } as const, null)
 const isLoaded = atom({ plugin: 'pr-watch', key: 'isLoaded' } as const, false)
 
 const GLYPH = { pass: '✓', fail: '✗', running: '●', queued: '○', skipped: '–' } as const
@@ -290,6 +324,98 @@ async function browse($: EngineInterface, pr: PrWatchSnapshot) {
   await run($, ['gh', 'pr', 'view', String(pr.number), '--web'])
 }
 
+const why = (ran: { stderr: string; stdout: string } | null): string =>
+  ((ran?.stderr || ran?.stdout) ?? 'git did not answer').trim().split('\n').filter(Boolean).pop() ?? ''
+
+/** Tells Claude what a key did to the branch, without starting a turn. */
+async function tell($: EngineInterface, what: string) {
+  try {
+    await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: `[pr-watch] ${what}` }] } })
+  } catch {
+    // A session that takes no notes still has the toast.
+  }
+}
+
+/**
+ * Rebase means rebased and pushed. A rebase that goes through cleanly is done
+ * here, at once; one that would conflict is Claude's, who can read both sides.
+ */
+async function rebaseNow($: EngineInterface, git: PrWatchGit) {
+  const onto = git.base.replace(/^origin\//, '')
+
+  if (git.modified + git.untracked > 0) {
+    $.ui.toast('Rebase: commit the uncommitted changes first', { timeoutMs: 8000 })
+
+    return
+  }
+  if (git.conflicts === null || git.conflicts.length > 0) {
+    await $.prompt.submit({ text: `${ASK.rebase}${git.base}.`, asUser: true })
+
+    return
+  }
+
+  $.ui.toast(`Rebasing onto ${onto}…`)
+  await run($, ['git', 'fetch', '--quiet', 'origin', onto], 30_000)
+
+  const rebased = await run($, ['git', 'rebase', git.base], 120_000)
+
+  if (rebased?.exitCode !== 0) {
+    // Back to exactly where the branch was: nothing half-done is left behind.
+    await run($, ['git', 'rebase', '--abort'])
+    $.ui.toast(`Rebase stopped and undone: ${why(rebased)}`, { timeoutMs: 10_000 })
+    await refreshGit($)
+
+    return
+  }
+
+  const upstream = await text($, ['git', 'rev-parse', '--abbrev-ref', '@{upstream}'])
+
+  if (upstream === null) {
+    $.ui.toast(`Rebased onto ${onto}; the branch is not pushed yet`, { timeoutMs: 8000 })
+    await tell($, `The person pressed Rebase: the branch ${git.branch} is rebased onto ${git.base}. It has no upstream, nothing was pushed.`)
+  } else {
+    // The lease refuses when the remote branch moved since it was last seen: someone else's push is never overwritten.
+    const pushed = await run($, ['git', 'push', '--force-with-lease'], 120_000)
+
+    $.ui.toast(
+      pushed?.exitCode === 0 ? `Rebased onto ${onto} and pushed` : `Rebased, but the push was refused: ${why(pushed)}`,
+      { timeoutMs: 10_000 },
+    )
+    await tell(
+      $,
+      pushed?.exitCode === 0
+        ? `The person pressed Rebase: the branch ${git.branch} is rebased onto ${git.base} and force-pushed with lease. Its commits have new ids.`
+        : `The person pressed Rebase: the branch ${git.branch} is rebased onto ${git.base}; the push was refused (${why(pushed)}).`,
+    )
+  }
+  await refreshGit($)
+  await refreshPr($)
+}
+
+/** A plain push. A refusal is shown with its own key; nothing is forced here. */
+async function pushNow($: EngineInterface, git: PrWatchGit, isForced: boolean) {
+  const upstream = await text($, ['git', 'rev-parse', '--abbrev-ref', '@{upstream}'])
+  const argv = isForced
+    ? ['git', 'push', '--force-with-lease']
+    : upstream === null
+      ? ['git', 'push', '--set-upstream', 'origin', git.branch]
+      : ['git', 'push']
+  const pushed = await run($, argv, 120_000)
+
+  if (pushed?.exitCode === 0) {
+    await update($, rejected, () => null)
+    $.ui.toast(isForced ? 'Force-pushed (with lease)' : 'Pushed', { timeoutMs: 6000 })
+    await tell($, `The person pressed Push: ${git.branch} is pushed${isForced ? ' (force, with lease)' : ''}.`)
+  } else if (!isForced && /rejected|non-fast-forward|fetch first/.test(`${pushed?.stderr}`)) {
+    await update($, rejected, () => git.head)
+    $.ui.toast('Push refused: the remote branch holds other commits', { timeoutMs: 8000 })
+  } else {
+    $.ui.toast(`Push failed: ${why(pushed)}`, { timeoutMs: 10_000 })
+  }
+  await refreshGit($)
+  await refreshPr($)
+}
+
 /** Leaves a merged branch for the default one, brought up to the remote's tip. */
 async function switchToBase($: EngineInterface, git: PrWatchGit) {
   const name = git.base.replace(/^origin\//, '')
@@ -389,6 +515,13 @@ export const register: Register = on => {
     return next({ ...e, props: { ...e.props, tail } })
   })
 
+  // A key's few words get their instructions here, unseen by the person.
+  on('prompt.submit', ($, e, next) => {
+    const how = (e.origin as { kind: string }).kind === 'plugin' ? howFor(e.text) : null
+
+    return how === null ? next(e) : next({ ...e, context: [...(e.context ?? []), how] })
+  })
+
   // --- The band above the prompt: PR, uncommitted work, rebase --------------
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
@@ -401,10 +534,16 @@ export const register: Register = on => {
       pr !== null && git !== null && now !== null && pr.branch === git.branch &&
       now !== 'merged' && now !== 'closed' && (await read($, hiddenPr)) !== keyOf(pr)
     const dirty = git === null ? 0 : git.modified + git.untracked
-    const hasPush = git !== null && dirty === 0 && (git.unpushed ?? 0) > 0
     // The branch's PR is merged and nothing was committed since: the branch is done.
     const isDone =
       pr !== null && git !== null && pr.state === 'MERGED' && pr.branch === git.branch && pr.headSha === git.head
+    const isOpen = pr !== null && git !== null && pr.state === 'OPEN' && pr.branch === git.branch
+    // A branch without an upstream has pushed nothing: everything on top of the base is outgoing.
+    const outgoing = git === null ? 0 : (git.unpushed ?? git.ahead)
+    const isBase = git !== null && `origin/${git.branch}` === git.base
+    const isRejected = git !== null && (await read($, rejected)) === git.head
+    const hasPush =
+      git !== null && dirty === 0 && !isDone && !isBase && (outgoing > 0 || (!isOpen && git.ahead > 0))
     const hasRebase =
       !isDone && git !== null && git.behind > 0 && `origin/${git.branch}` !== git.base && (await read($, hiddenRebase)) !== git.baseSha
 
@@ -481,33 +620,40 @@ export const register: Register = on => {
               · {[git.modified > 0 ? `${git.modified} modified` : '', git.untracked > 0 ? `${git.untracked} new` : '']
                 .filter(Boolean)
                 .join(', ')}
-              {(git.unpushed ?? 0) > 0 ? ` · ↑ ${git.unpushed} unpushed` : ''}
+              {outgoing > 0 ? ` · ↑ ${outgoing} not pushed` : ''}
             </Text>
             <Text> </Text>
             <Button
               key="commit"
               plain
               hotkey="c"
-              label="Commit & push"
+              label="Commit"
               onPress={async () => {
-                await $.prompt.submit({ text: COMMIT, asUser: true })
+                await $.prompt.submit({ text: ASK.commit, asUser: true })
               }}
             />
           </Box>
         )}
         {hasPush && (
           <Box columnGap={1}>
-            <Text bold color="cyan">↑ {plural(git.unpushed ?? 0, 'commit')} unpushed</Text>
+            <Text bold color="cyan">
+              {outgoing > 0 ? `↑ ${plural(outgoing, 'commit')} not pushed` : '↑ pushed'}
+            </Text>
+            {!isOpen && <Text dimColor>· no PR yet</Text>}
             <Text> </Text>
             <Button
               key="push"
               plain
               hotkey="p"
-              label="Push"
+              label={isOpen ? 'Push' : outgoing > 0 ? 'Push & open PR' : 'Open PR'}
               onPress={async () => {
-                await $.prompt.submit({ text: PUSH, asUser: true })
+                if (isOpen) await pushNow($, git, false)
+                else await $.prompt.submit({ text: ASK.ship, asUser: true })
               }}
             />
+            {isRejected && (
+              <Button key="force" plain hotkey="f" label="Force-push (with lease)" onPress={() => pushNow($, git, true)} />
+            )}
           </Box>
         )}
         {isDone && (
@@ -546,10 +692,8 @@ export const register: Register = on => {
               key="rebase"
               plain
               hotkey="b"
-              label="Rebase now"
-              onPress={async () => {
-                await $.prompt.submit({ text: rebaseAsk(git.base), asUser: true })
-              }}
+              label={files.length > 0 ? 'Rebase with Claude' : 'Rebase & push'}
+              onPress={() => rebaseNow($, git)}
             />
             <Button key="hide-rebase" plain dimColor hotkey="h" label="Hide" onPress={() => update($, hiddenRebase, () => git.baseSha)} />
           </Box>

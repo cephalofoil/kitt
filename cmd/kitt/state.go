@@ -36,6 +36,7 @@ type EmuState struct {
 type CheckResult struct {
 	At     time.Time `json:"at"`
 	Commit string    `json:"commit"`
+	Tree   string    `json:"tree,omitempty"`
 	Passed int       `json:"passed"`
 	Failed []string  `json:"failed,omitempty"`
 }
@@ -45,6 +46,7 @@ type ProofState struct {
 	Status  string    `json:"status"`
 	Shots   int       `json:"shots"`
 	Commit  string    `json:"commit"`
+	Tree    string    `json:"tree,omitempty"`
 	Note    string    `json:"note,omitempty"`
 	Started time.Time `json:"started"`
 	Ended   time.Time `json:"ended,omitempty"`

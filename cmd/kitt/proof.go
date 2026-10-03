@@ -99,11 +99,12 @@ func cmdProof(args []string) error {
 		}
 		releaseEmulator(lane)
 		head, _ := run(lane.Path, "git", "rev-parse", "HEAD")
+		tree := treeOf(lane.Path)
 		var done ProofState
 		if err := updateState(func(s *State) {
 			if entry := s.Lanes[lane.key()]; entry != nil && entry.Proof != nil {
 				entry.Proof.Status, entry.Proof.Note = verdict, opts["note"]
-				entry.Proof.Ended, entry.Proof.Commit = time.Now(), head
+				entry.Proof.Ended, entry.Proof.Commit, entry.Proof.Tree = time.Now(), head, tree
 				done = *entry.Proof
 			}
 		}); err != nil {
@@ -137,8 +138,8 @@ func cmdProof(args []string) error {
 		}
 		p := entry.Proof
 		stale := ""
-		if head, _ := run(lane.Path, "git", "rev-parse", "HEAD"); p.Status != "running" && head != p.Commit {
-			stale = "  (stale: commits since)"
+		if p.Status != "running" && treeOf(lane.Path) != p.Tree {
+			stale = "  (stale: the code changed since)"
 		}
 		fmt.Printf("%s: %s  %d shots  %s ago%s\n  %s\n", lane.Name, p.Status, p.Shots, ago(p.Started), stale, p.Dir)
 		if p.Note != "" {

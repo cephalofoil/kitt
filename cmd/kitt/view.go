@@ -25,13 +25,15 @@ type PR struct {
 // PR, which of its apps answer.
 type LaneView struct {
 	Lane
-	Dirty      int
-	Ahead      int
-	Behind     int
-	Agent      string
-	AgentPane  string
-	Workspace  string
-	PR         *PR
+	Dirty     int
+	Ahead     int
+	Behind    int
+	Agent     string
+	AgentPane string
+	Workspace string
+	PR        *PR
+	// Tree is the content id of the checkout, read only for lanes with a proof or checks to compare it to.
+	Tree       string
 	Up         []string
 	Down       []string
 	InEmulator bool
@@ -150,6 +152,9 @@ func views(withPRs bool) []LaneView {
 						view.Ahead, _ = strconv.Atoi(fields[0])
 						view.Behind, _ = strconv.Atoi(fields[1])
 					}
+				}
+				if view.State != nil && (view.State.Proof != nil || view.State.Checks != nil) {
+					view.Tree = treeOf(view.Path)
 				}
 				for _, app := range cfg.Apps {
 					if app.Port == 0 || app.Dev == "" {
@@ -283,7 +288,7 @@ func proofText(v LaneView) string {
 	case "running":
 		return "proof …"
 	case "pass":
-		if proof.Commit != v.Head {
+		if proof.Tree != v.Tree {
 			return "proof stale"
 		}
 		return "proof ✓"

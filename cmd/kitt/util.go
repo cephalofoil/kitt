@@ -133,6 +133,45 @@ func slug(s string, max int) string {
 	return s
 }
 
+// treeOf names the content of a checkout as it stands, committed or not: the
+// id of the tree a commit of everything would have. Committing the same files
+// leaves it unchanged, which is what keeps a proof valid across the commit.
+func treeOf(dir string) string {
+	if status, err := run(dir, "git", "status", "--porcelain"); err == nil && status == "" {
+		tree, _ := run(dir, "git", "rev-parse", "HEAD^{tree}")
+		return tree
+	}
+	index, err := run(dir, "git", "rev-parse", "--path-format=absolute", "--git-path", "index")
+	if err != nil {
+		return ""
+	}
+	// A copy of the index keeps its stat cache, so staging into it is quick and
+	// the real index is never touched.
+	data, err := os.ReadFile(filepath.FromSlash(index))
+	if err != nil {
+		return ""
+	}
+	scratch := filepath.Join(os.TempDir(), fmt.Sprintf("kitt-index-%d-%d", os.Getpid(), time.Now().UnixNano()))
+	if os.WriteFile(scratch, data, 0o600) != nil {
+		return ""
+	}
+	defer os.Remove(scratch)
+
+	for _, args := range [][]string{{"add", "-A"}, {"write-tree"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_INDEX_FILE="+scratch)
+		out, err := cmd.Output()
+		if err != nil {
+			return ""
+		}
+		if args[0] == "write-tree" {
+			return strings.TrimSpace(string(out))
+		}
+	}
+	return ""
+}
+
 func readJSON(path string, into any) error {
 	data, err := os.ReadFile(path)
 	if err != nil {

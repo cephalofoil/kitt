@@ -72,7 +72,7 @@ func check(lane Lane, all bool, only string, live bool) (CheckResult, string) {
 	}
 
 	head, _ := run(lane.Path, "git", "rev-parse", "HEAD")
-	result := CheckResult{At: time.Now(), Commit: head}
+	result := CheckResult{At: time.Now(), Commit: head, Tree: treeOf(lane.Path)}
 	ran := 0
 	for _, app := range apps {
 		if only != "" && app.Name != only {
