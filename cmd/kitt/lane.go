@@ -252,8 +252,8 @@ func cmdRepo(args []string) error {
 		describeRepo(cfg)
 		if cfg.Source == "detected" {
 			fmt.Println("\nThis is what kitt detects; nothing was written. To change it:")
-			fmt.Println("  kitt init          writes it as kitt.toml into the repo, for you to edit and commit")
-			fmt.Println("  kitt init --home   writes it into kitt's own folder instead, for a repo that is not yours to change")
+			fmt.Println("  kitt init           walks you through it and writes kitt.toml")
+			fmt.Println("  kitt init --agent   lets an agent read the repo first for dev commands, checks and ports")
 		}
 		return nil
 
@@ -292,29 +292,6 @@ func describeRepo(cfg RepoConfig) {
 		fmt.Printf("  app     %-10s %-8s %-14s port %d%s · %d checks\n", app.Name, app.Kind, app.Dir, app.Port, shared, len(app.Checks))
 	}
 	fmt.Printf("  link    %d files\n", len(cfg.Link))
-}
-
-func cmdInit(args []string) error {
-	_, opts := flags(args, "force", "home")
-	repo, err := findRepo(opts["repo"])
-	if err != nil {
-		return err
-	}
-	path := filepath.Join(repo.Path, "kitt.toml")
-	if opts["home"] != "" {
-		// For a repo that is not the person's to add a file to.
-		path = filepath.Join(configDir(), "repos", filepath.Base(repo.Path)+".toml")
-		_ = os.MkdirAll(filepath.Dir(path), 0o755)
-	}
-	if exists(path) && opts["force"] == "" {
-		return fail("%s exists: pass --force to overwrite it", path)
-	}
-	cfg := loadRepoConfig(repo.Path, "")
-	if err := os.WriteFile(path, []byte(renderConfig(cfg)), 0o644); err != nil {
-		return err
-	}
-	fmt.Printf("wrote %s from what the checkout shows; edit it to fit\n", path)
-	return nil
 }
 
 // --- kitt new ----------------------------------------------------------------

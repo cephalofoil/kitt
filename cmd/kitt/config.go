@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -39,6 +38,8 @@ type RepoConfig struct {
 
 	// Source says where the config came from: a kitt.toml path, or "detected".
 	Source string `toml:"-"`
+	// Notes are what an agent's draft was unsure about; they are written into the file as comments.
+	Notes []string `toml:"-"`
 }
 
 type AgentCfg struct {
@@ -452,67 +453,4 @@ func fillExpo(root string, app *App) {
 	if app.Package == "" {
 		app.Package = manifest.Expo.Android.Package
 	}
-}
-
-// renderConfig writes a kitt.toml for `kitt init`: the detected values, spelled
-// out so they can be edited.
-func renderConfig(cfg RepoConfig) string {
-	var b strings.Builder
-	quote := func(items []string) string {
-		quoted := make([]string, len(items))
-		for i, item := range items {
-			quoted[i] = strconv.Quote(item)
-		}
-		return "[" + strings.Join(quoted, ", ") + "]"
-	}
-
-	fmt.Fprintf(&b, "name = %q\nbase = %q\nlanes = %q\nbranch_prefix = %q\n\n", cfg.Name, cfg.Base, cfg.Lanes, cfg.BranchPrefix)
-	b.WriteString("# Gitignored files every lane gets as a symlink to the main checkout.\n")
-	b.WriteString("link = [\n")
-	for _, link := range cfg.Link {
-		fmt.Fprintf(&b, "  %q,\n", link)
-	}
-	b.WriteString("]\n")
-
-	for _, app := range cfg.Apps {
-		fmt.Fprintf(&b, "\n[[app]]\nname = %q\nkind = %q\ndir = %q\nport = %d\n", app.Name, app.Kind, app.Dir, app.Port)
-		if app.Shared {
-			b.WriteString("shared = true\n")
-		}
-		if app.Dev != "" {
-			fmt.Fprintf(&b, "dev = %q\n", app.Dev)
-		}
-		if len(app.Setup) > 0 {
-			fmt.Fprintf(&b, "setup = %s\n", quote(app.Setup))
-		}
-		if app.Lazy {
-			b.WriteString("lazy = true\n")
-		}
-		if len(app.Checks) > 0 {
-			fmt.Fprintf(&b, "checks =%s\n", quote(app.Checks))
-		}
-	}
-
-	b.WriteString(`
-# What kitt cannot see and you may want to add:
-#
-# On an app:
-#   env_files = [".env.local"]          env files loaded into the dev server's environment, in the app's directory
-#   port_env = "PORT"                   a variable that receives the lane's port
-#   stop = "docker compose -p x-{lane} down"   what ends what dev started, when closing its pane is not enough
-#   shared = true                       one instance for all lanes, run from the main checkout
-#   lazy = true                         only started when named (kitt up <lane> <app>)
-#   [app.env]
-#   API_URL = "http://localhost:{port:api}"    how this app finds another app of the same lane
-#
-# For the repo:
-#   [emulator]
-#   reverse = [54321]                   ports besides the apps' own the emulator must reach
-#   [proof]
-#   guide = "docs/proof.md"             how to prove a change here: test accounts, how to reach a screen
-#   [agent]
-#   prompt = "Work on issue #{issue}: {title}. ..."   what a new issue lane's agent is told
-`)
-
-	return b.String()
 }

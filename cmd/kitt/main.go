@@ -34,7 +34,9 @@ const usage = `kitt — lanes for parallel work
   kitt link [lane]               link the env files again
   kitt rm <lane> [--force]       remove a lane that holds nothing unsaved
   kitt repo add [path] | list | rm <name>
-  kitt init [--home]             write kitt.toml into the repo from what kitt detects (--home: into kitt's folder)
+  kitt init [path]               set a repo up: what kitt detects, shown piece by piece to keep, edit or drop
+        [--agent]                  an agent reads the repo first and fills in what detection cannot see
+        [--home] [--yes]           write into kitt's folder, not the repo · take everything without asking
   kitt detect [path]             print what kitt detects in a repo; registers and writes nothing
   kitt doctor                    what kitt needs and whether it is there
 

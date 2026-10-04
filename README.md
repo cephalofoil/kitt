@@ -61,7 +61,18 @@ Every key is also a command: `kitt focus`, `kitt agent`, `kitt emu`, `kitt up`, 
 
 ## kitt.toml
 
-Everything project-specific lives in the repo. Without a `kitt.toml`, kitt detects the apps (Expo, Next, Vite, a Python backend), their checks from `package.json` scripts, and the `.env` files to link; `kitt init` writes that down to edit, and `kitt detect <path>` prints it for any repo without registering or writing anything.
+Everything project-specific lives in the repo, in `kitt.toml`. `kitt init` writes it:
+
+```
+kitt detect <path>      # look first: what kitt sees in a repo; registers and writes nothing
+kitt init               # the wizard: each detected piece shown to keep, edit or drop, then written and registered
+kitt init --agent       # an agent reads the repo first (justfile, Makefile, CI, AGENTS.md) and fills in dev commands, checks, ports
+kitt init --home        # write into kitt's own folder, for a repo that is not yours to add a file to
+```
+
+Detection alone finds the apps (Expo, Next, Vite, anything with a `dev` script, a Python backend), their checks from `package.json` scripts, the package manager from the nearest lockfile, and the gitignored `.env` files to link. What it cannot see, the agent or you add: which env file means local, how the apps find each other, what CI really runs.
+
+Which apps a lane touched is never stored. kitt reads it from git each time: the files that differ from the base branch, matched to the app whose `dir` they lie in.
 
 ```toml
 name = "schlemm"
