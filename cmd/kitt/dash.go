@@ -25,8 +25,15 @@ var (
 	accent  = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)
 )
 
+// prRow is an open pull request that has no lane yet.
+type prRow struct {
+	Repo string
+	PR   *PR
+}
+
 type dash struct {
 	rows    []LaneView
+	prs     []prRow
 	cursor  int
 	showAll bool
 	width   int
@@ -47,7 +54,10 @@ type dash struct {
 
 type (
 	tickMsg time.Time
-	rowsMsg []LaneView
+	rowsMsg struct {
+		lanes []LaneView
+		prs   []prRow
+	}
 	doneMsg string
 )
 
@@ -89,7 +99,24 @@ func dashWorkspace() error {
 	return nil
 }
 
-func load() tea.Msg { return rowsMsg(views(true)) }
+func load() tea.Msg {
+	lanes := views(true)
+	hasLane := map[string]bool{}
+	for _, lane := range lanes {
+		if lane.Managed {
+			hasLane[lane.Repo+"\x00"+lane.Branch] = true
+		}
+	}
+	var prs []prRow
+	for _, repo := range loadGlobal().Repos {
+		for _, pr := range openPRsOf(repo.Path, 45*time.Second) {
+			if !hasLane[repo.Name+"\x00"+pr.Branch] {
+				prs = append(prs, prRow{Repo: repo.Name, PR: pr})
+			}
+		}
+	}
+	return rowsMsg{lanes: lanes, prs: prs}
+}
 
 func tick() tea.Cmd {
 	return tea.Tick(4*time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
@@ -132,9 +159,9 @@ func (d dash) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return d, tea.Batch(load, tick())
 
 	case rowsMsg:
-		d.rows, d.loaded = msg, true
-		if rows := d.visible(); d.cursor >= len(rows) {
-			d.cursor = max(0, len(rows)-1)
+		d.rows, d.prs, d.loaded = msg.lanes, msg.prs, true
+		if count := len(d.visible()) + len(d.prs); d.cursor >= count {
+			d.cursor = max(0, count-1)
 		}
 		return d, nil
 
@@ -178,7 +205,7 @@ func (d dash) pressed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		d.cursor = max(0, d.cursor-1)
 	case "down", "j":
-		d.cursor = min(len(rows)-1, d.cursor+1)
+		d.cursor = min(len(rows)+len(d.prs)-1, d.cursor+1)
 	case "r":
 		return d, load
 	case "t":
@@ -186,6 +213,32 @@ func (d dash) pressed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		d.cursor = 0
 	case "n":
 		d.mode, d.input = "new", ""
+	}
+	// An open pull request: enter checks it out as a lane, o shows it on GitHub.
+	if at := d.cursor - len(rows); row == nil && at >= 0 && at < len(d.prs) {
+		pr := d.prs[at]
+		number := fmt.Sprint(pr.PR.Number)
+		switch msg.String() {
+		case "enter":
+			return start("checking out PR #"+number, "pr", number, "--repo", pr.Repo)
+		case "o":
+			repoPath := ""
+			for _, repo := range loadGlobal().Repos {
+				if repo.Name == pr.Repo {
+					repoPath = repo.Path
+				}
+			}
+			d.busy = "browser → PR #" + number
+			return d, func() tea.Msg {
+				if _, err := run(repoPath, "gh", "pr", "view", number, "--web"); err != nil {
+					return doneMsg(err.Error())
+				}
+				return doneMsg("opened PR #" + number)
+			}
+		case "e", "g", "u", "d", "c", "p", "a", "x":
+			return say("PR #" + number + " has no lane yet: enter checks it out")
+		}
+		return d, nil
 	}
 	if row == nil {
 		return d, nil
@@ -255,6 +308,10 @@ func (d dash) typed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	repo := ""
 	if d.cursor < len(rows) {
 		repo = rows[d.cursor].Repo
+	} else if at := d.cursor - len(rows); at >= 0 && at < len(d.prs) {
+		repo = d.prs[at].Repo
+	} else if repos := loadGlobal().Repos; len(repos) > 0 {
+		repo = repos[0].Name
 	}
 
 	switch msg.Type {
@@ -287,7 +344,7 @@ func (d dash) typed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return d, nil
 
 	case tea.KeyRunes, tea.KeySpace:
-		if d.mode == "remove" {
+		if d.mode == "remove" && d.cursor < len(rows) {
 			row := rows[d.cursor]
 			d.mode = ""
 			if msg.String() == "y" {
@@ -353,8 +410,8 @@ func (d dash) View() string {
 	}
 	b.WriteString("\n  " + head + "\n\n")
 
-	const nameW, agentW, gitW, prW, proofW = 26, 10, 10, 13, 12
-	titleW := min(46, max(12, width-(4+nameW+agentW+gitW+prW+proofW+8+6)))
+	const nameW, appsW, agentW, gitW, prW, proofW = 26, 14, 10, 10, 13, 12
+	titleW := min(46, max(12, width-(4+nameW+appsW+agentW+gitW+prW+proofW+8+7)))
 
 	repo := ""
 	for i, row := range rows {
@@ -379,17 +436,39 @@ func (d dash) View() string {
 
 		title := row.Branch
 		switch {
-		case row.State != nil && row.State.Title != "":
+		case row.State != nil && row.State.Title != "" && row.State.Issue > 0:
 			title = fmt.Sprintf("#%d %s", row.State.Issue, row.State.Title)
+		case row.State != nil && row.State.Title != "":
+			title = row.State.Title
 		case row.PR != nil:
 			title = row.PR.Title
 		}
 
-		b.WriteString(pointer + agentDot(row.Agent) + " " + name + " " + dim.Render(cut(title, titleW)) + " " +
+		b.WriteString(pointer + agentDot(row.Agent) + " " + name + " " + dim.Render(cut(title, titleW)) + " " + cyan.Render(cut(strings.Join(row.Touched, "·"), appsW)) + " " +
 			agentCell(row.Agent, agentW) + gitCell(row, gitW) + prCell(row, prW) + proofCell(row, proofW) + marks(row) + "\n")
 	}
 	if hidden > 0 && !d.showAll {
 		b.WriteString("\n  " + dim.Render(fmt.Sprintf("+ %d other worktrees · t shows them", hidden)) + "\n")
+	}
+
+	// Open pull requests without a lane: fetched and checked out only when asked.
+	if len(d.prs) > 0 {
+		b.WriteString("\n  " + dim.Render("open pull requests · enter checks one out as a lane") + "\n")
+		for i, pr := range d.prs {
+			pointer := "  "
+			label := cut(fmt.Sprintf("#%d", pr.PR.Number), 6)
+			if len(rows)+i == d.cursor {
+				pointer = accent.Render("▸ ")
+				label = bold.Render(label)
+			}
+			state := prCell(LaneView{PR: pr.PR}, prW)
+			draft := ""
+			if pr.PR.Draft {
+				draft = dim.Render(" draft")
+			}
+			b.WriteString(pointer + dim.Render("◦ ") + label + cut(pr.PR.Title, min(70, max(20, width-60))) + " " +
+				dim.Render(cut(pr.PR.Branch, 34)) + " " + state + draft + "\n")
+		}
 	}
 
 	b.WriteString("\n")

@@ -80,9 +80,16 @@ func up(lane Lane, only []string, printOnly bool) ([]string, error) {
 	}
 	cfg := loadRepoConfig(lane.Main, lane.Path)
 	// Unnamed, `up` starts the apps the lane is about; any other starts when named.
+	touched := map[string]bool{}
+	if len(only) == 0 && !lane.IsMain {
+		for _, app := range touchedApps(lane, cfg) {
+			touched[app.Name] = true
+		}
+	}
 	wanted := func(app App) bool {
 		if len(only) == 0 {
-			return lane.wants(app)
+			// What the lane is about, and whatever it has changed files of since.
+			return lane.wants(app) || touched[app.Name]
 		}
 		for _, name := range only {
 			if name == app.Name {

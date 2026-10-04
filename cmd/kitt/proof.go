@@ -249,7 +249,10 @@ func proofPage(lane Lane, proof ProofState) (string, error) {
 
 	title := lane.Name
 	if lane.State != nil && lane.State.Title != "" {
-		title = fmt.Sprintf("#%d %s", lane.State.Issue, lane.State.Title)
+		title = lane.State.Title
+		if lane.State.Issue > 0 {
+			title = fmt.Sprintf("#%d %s", lane.State.Issue, lane.State.Title)
+		}
 	}
 	color := map[string]string{"pass": "#1a7f37", "fail": "#cf222e"}[proof.Status]
 	commit := proof.Commit

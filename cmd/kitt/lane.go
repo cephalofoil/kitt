@@ -250,6 +250,11 @@ func cmdRepo(args []string) error {
 		}
 		fmt.Printf("registered %s  %s\n", cfg.Name, top)
 		describeRepo(cfg)
+		if cfg.Source == "detected" {
+			fmt.Println("\nThis is what kitt detects; nothing was written. To change it:")
+			fmt.Println("  kitt init          writes it as kitt.toml into the repo, for you to edit and commit")
+			fmt.Println("  kitt init --home   writes it into kitt's own folder instead, for a repo that is not yours to change")
+		}
 		return nil
 
 	case "rm", "remove":
@@ -290,12 +295,17 @@ func describeRepo(cfg RepoConfig) {
 }
 
 func cmdInit(args []string) error {
-	_, opts := flags(args, "force")
+	_, opts := flags(args, "force", "home")
 	repo, err := findRepo(opts["repo"])
 	if err != nil {
 		return err
 	}
 	path := filepath.Join(repo.Path, "kitt.toml")
+	if opts["home"] != "" {
+		// For a repo that is not the person's to add a file to.
+		path = filepath.Join(configDir(), "repos", filepath.Base(repo.Path)+".toml")
+		_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	}
 	if exists(path) && opts["force"] == "" {
 		return fail("%s exists: pass --force to overwrite it", path)
 	}
@@ -809,5 +819,126 @@ func cmdDetect(args []string) error {
 	top = filepath.Clean(filepath.FromSlash(top))
 	cfg := loadRepoConfig(top, "")
 	fmt.Printf("# %s\n# source: %s\n\n%s", top, cfg.Source, renderConfig(cfg))
+	return nil
+}
+
+// cmdPr checks an open pull request out as a lane, to look at it before the
+// merge: its branch is fetched only now, into a worktree of its own, with the
+// apps the PR touches as the lane's apps.
+func cmdPr(args []string) error {
+	rest, opts := flags(args, "focus", "no-setup")
+	if len(rest) == 0 || !isNumber(rest[0]) {
+		return fail("usage: kitt pr <number> [--repo r] [--focus]")
+	}
+	repo, err := findRepo(opts["repo"])
+	if err != nil {
+		return err
+	}
+	cfg := loadRepoConfig(repo.Path, "")
+
+	var pr struct {
+		Number int    `json:"number"`
+		Title  string `json:"title"`
+		URL    string `json:"url"`
+		State  string `json:"state"`
+		Branch string `json:"headRefName"`
+		Cross  bool   `json:"isCrossRepository"`
+		Closes []struct {
+			Number int `json:"number"`
+		} `json:"closingIssuesReferences"`
+	}
+	out, err := run(repo.Path, "gh", "pr", "view", rest[0], "--json", "number,title,url,state,headRefName,isCrossRepository,closingIssuesReferences")
+	if err != nil {
+		return fail("PR #%s: %v", rest[0], err)
+	}
+	_ = json.Unmarshal([]byte(out), &pr)
+	if pr.Cross {
+		return fail("PR #%d comes from a fork: check it out with `gh pr checkout %d` in a worktree of your own, then `kitt adopt`", pr.Number, pr.Number)
+	}
+
+	// A branch that already has a lane is that lane.
+	for _, lane := range lanesOf(repo, loadState()) {
+		if lane.Branch == pr.Branch {
+			if !lane.Managed {
+				return fail("%s is checked out at %s, which is not a lane yet: kitt adopt %s", pr.Branch, lane.Path, lane.Path)
+			}
+			fmt.Printf("PR #%d is the lane %s\n", pr.Number, lane.Name)
+			return nil
+		}
+	}
+
+	fmt.Printf("fetching %s\n", pr.Branch)
+	if _, err := runTimeout(repo.Path, 90*time.Second, "git", "fetch", "--quiet", "origin", pr.Branch+":refs/remotes/origin/"+pr.Branch); err != nil {
+		return err
+	}
+	_, _ = runTimeout(repo.Path, 60*time.Second, "git", "fetch", "--quiet", "origin", cfg.Base)
+
+	name := slug(pr.Branch[strings.LastIndex(pr.Branch, "/")+1:], 40)
+	if name == "" {
+		name = "pr-" + rest[0]
+	}
+	path := filepath.Join(cfg.lanesDir(repo.Path), name)
+	if exists(path) {
+		return fail("%s exists already", path)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+
+	if _, err := run(repo.Path, "git", "rev-parse", "--verify", "--quiet", "refs/heads/"+pr.Branch); err == nil {
+		if _, err := runTimeout(repo.Path, 90*time.Second, "git", "worktree", "add", path, pr.Branch); err != nil {
+			return err
+		}
+		// A local copy of the branch may be older than the PR: bring it up, or say that it differs.
+		if _, err := run(path, "git", "merge", "--ff-only", "origin/"+pr.Branch); err != nil {
+			fmt.Printf("  note    the local %s differs from the PR and was left as it is\n", pr.Branch)
+		}
+	} else if _, err := runTimeout(repo.Path, 90*time.Second, "git", "worktree", "add", "--track", "-b", pr.Branch, path, "origin/"+pr.Branch); err != nil {
+		return err
+	}
+
+	entry := LaneState{Repo: repo.Name, Name: name, Path: path, Created: time.Now(), Title: pr.Title, URL: pr.URL}
+	if len(pr.Closes) > 0 {
+		entry.Issue = pr.Closes[0].Number
+	}
+	if err := updateState(func(s *State) {
+		entry.Slot = s.freeSlot(repo.Name)
+		s.Lanes[norm(path)] = &entry
+	}); err != nil {
+		return err
+	}
+	lane := Lane{Repo: repo.Name, Main: repo.Path, Path: path, Name: name, Branch: pr.Branch, Slot: entry.Slot, Managed: true, State: &entry}
+	cfg = loadRepoConfig(repo.Path, path)
+
+	// The lane is about what the PR touches.
+	var apps []string
+	for _, app := range touchedApps(lane, cfg) {
+		if app.Dev != "" && !app.Shared {
+			apps = append(apps, app.Name)
+		}
+	}
+	if len(apps) > 0 {
+		entry.Apps = apps
+		_ = updateState(func(s *State) {
+			if kept := s.Lanes[norm(path)]; kept != nil {
+				kept.Apps = apps
+			}
+		})
+	}
+
+	fmt.Printf("lane %s  slot %d  PR #%d  %s\n  %s\n", name, lane.Slot, pr.Number, pr.Branch, path)
+	if len(apps) > 0 {
+		fmt.Printf("  apps    %s\n", strings.Join(apps, ", "))
+	}
+	linkFiles(lane, cfg, os.Stdout)
+	if opts["no-setup"] == "" {
+		setupLane(lane, cfg)
+	}
+	if hasHerdr() {
+		if _, err := herdrOpen(lane, opts["focus"] != ""); err != nil {
+			fmt.Printf("  herdr   %v\n", err)
+		}
+	}
+	fmt.Printf("PR #%d is checked out as %s: enter opens it\n", pr.Number, name)
 	return nil
 }

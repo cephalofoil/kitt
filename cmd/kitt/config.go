@@ -493,5 +493,26 @@ func renderConfig(cfg RepoConfig) string {
 		}
 	}
 
+	b.WriteString(`
+# What kitt cannot see and you may want to add:
+#
+# On an app:
+#   env_files = [".env.local"]          env files loaded into the dev server's environment, in the app's directory
+#   port_env = "PORT"                   a variable that receives the lane's port
+#   stop = "docker compose -p x-{lane} down"   what ends what dev started, when closing its pane is not enough
+#   shared = true                       one instance for all lanes, run from the main checkout
+#   lazy = true                         only started when named (kitt up <lane> <app>)
+#   [app.env]
+#   API_URL = "http://localhost:{port:api}"    how this app finds another app of the same lane
+#
+# For the repo:
+#   [emulator]
+#   reverse = [54321]                   ports besides the apps' own the emulator must reach
+#   [proof]
+#   guide = "docs/proof.md"             how to prove a change here: test accounts, how to reach a screen
+#   [agent]
+#   prompt = "Work on issue #{issue}: {title}. ..."   what a new issue lane's agent is told
+`)
+
 	return b.String()
 }

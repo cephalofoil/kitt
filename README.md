@@ -23,7 +23,8 @@ go build -o ~/.local/bin/kitt.exe ./cmd/kitt     # any directory on PATH
 ## A day with it
 
 ```
-kitt repo add                 # once, inside the repo
+kitt repo add                 # once, inside the repo: registers it and shows what kitt detects
+kitt init                     # optional: write that as kitt.toml to edit (--home for a repo that is not yours)
 kitt dash --workspace         # the dashboard as its own herdr workspace
 
 kitt new 338                  # lane for issue 338: worktree, branch, env links, install, and an agent started on the issue
@@ -31,7 +32,7 @@ kitt new 412 --apps web       # a lane about the website: starts the web app, le
 kitt new cook-mode-proto --prompt "/wayfinder cook mode across several recipes"
 ```
 
-In the dashboard, one row per lane: the agent's state, uncommitted and behind counts, the PR and its checks, the last proof, which dev servers answer, and which lane the emulator shows.
+In the dashboard, one row per lane: the apps it has changed files of, the agent's state, uncommitted and behind counts, the PR and its checks, the last proof, which dev servers answer, and which lane the emulator shows.
 
 | Key | |
 |---|---|
@@ -46,6 +47,8 @@ In the dashboard, one row per lane: the agent's state, uncommitted and behind co
 | `a` | adopt a worktree kitt did not create (Claude's, herdr's, a hand-made one) |
 | `x` | remove a lane that holds nothing unsaved |
 | `t` | show the worktrees that are not lanes |
+
+Under the lanes, the open pull requests that have no lane yet (a bot's are left out). `enter` on one fetches its branch and checks it out as a lane about the apps it touches; `o` shows it on GitHub. The same from the shell: `kitt pr 380`.
 
 Every key is also a command: `kitt focus`, `kitt agent`, `kitt emu`, `kitt up`, `kitt check`, `kitt proof open`, `kitt adopt`, `kitt rm`. See `kitt help`.
 

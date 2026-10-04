@@ -19,6 +19,10 @@ type PR struct {
 	Draft  bool
 	// Checks is pass, fail, running, or empty when the PR reports none.
 	Checks string
+	Branch string
+	Author string
+	Bot    bool
+	Cross  bool
 }
 
 // LaneView is a lane with everything read live: its work tree, its agent, its
@@ -37,11 +41,14 @@ type LaneView struct {
 	Up         []string
 	Down       []string
 	InEmulator bool
+	// Touched are the apps the lane changed files of, against its base branch.
+	Touched []string
 }
 
 type prCache struct {
-	at  time.Time
-	prs map[string]*PR
+	at   time.Time
+	prs  map[string]*PR
+	open []*PR
 }
 
 var (
@@ -49,48 +56,78 @@ var (
 	prByDir = map[string]prCache{}
 )
 
-// prsOf reads a repo's recent pull requests in one call, keyed by head branch,
-// and keeps them for a while: the dashboard asks every few seconds.
+// prsOf reads a repo's pull requests, keyed by head branch, and keeps them for
+// a while: the dashboard asks every few seconds. Open ones are read in full,
+// closed and merged ones only as far back as the lanes can still care about.
 func prsOf(repoPath string, maxAge time.Duration) map[string]*PR {
+	prs, _ := prData(repoPath, maxAge)
+	return prs
+}
+
+// openPRsOf lists a repo's open pull requests a person opened, newest first.
+// A bot's (Renovate's) are left out: they are not work to pick up here.
+func openPRsOf(repoPath string, maxAge time.Duration) []*PR {
+	_, open := prData(repoPath, maxAge)
+	return open
+}
+
+const prFields = "number,title,state,isDraft,headRefName,headRefOid,statusCheckRollup,author,isCrossRepository"
+
+func prData(repoPath string, maxAge time.Duration) (map[string]*PR, []*PR) {
 	prMu.Lock()
 	defer prMu.Unlock()
 
 	if cached, ok := prByDir[repoPath]; ok && time.Since(cached.at) < maxAge {
-		return cached.prs
+		return cached.prs, cached.open
 	}
 
-	out, err := runTimeout(repoPath, 20*time.Second, "gh", "pr", "list", "--state", "all", "--limit", "60",
-		"--json", "number,title,state,isDraft,headRefName,headRefOid,statusCheckRollup")
-	prs := map[string]*PR{}
-	if err != nil {
-		if cached, ok := prByDir[repoPath]; ok {
-			return cached.prs
-		}
-		return prs
-	}
-
-	var list []struct {
+	type item struct {
 		Number int    `json:"number"`
 		Title  string `json:"title"`
 		State  string `json:"state"`
 		Draft  bool   `json:"isDraft"`
 		Branch string `json:"headRefName"`
 		Head   string `json:"headRefOid"`
+		Cross  bool   `json:"isCrossRepository"`
+		Author struct {
+			Login string `json:"login"`
+			IsBot bool   `json:"is_bot"`
+		} `json:"author"`
 		Rollup []struct {
 			Status     string `json:"status"`
 			Conclusion string `json:"conclusion"`
 			State      string `json:"state"`
 		} `json:"statusCheckRollup"`
 	}
-	_ = json.Unmarshal([]byte(out), &list)
+	read := func(state string, limit string) ([]item, error) {
+		out, err := runTimeout(repoPath, 25*time.Second, "gh", "pr", "list", "--state", state, "--limit", limit, "--json", prFields)
+		if err != nil {
+			return nil, err
+		}
+		var list []item
+		return list, json.Unmarshal([]byte(out), &list)
+	}
 
-	for _, item := range list {
-		// gh lists newest first: the first PR seen for a branch is its current one.
-		if _, seen := prs[item.Branch]; seen {
+	opened, err := read("open", "100")
+	if err != nil {
+		if cached, ok := prByDir[repoPath]; ok {
+			return cached.prs, cached.open
+		}
+		return map[string]*PR{}, nil
+	}
+	recent, _ := read("all", "40")
+
+	prs := map[string]*PR{}
+	var open []*PR
+	for _, it := range append(opened, recent...) {
+		// gh lists newest first, and the open ones come first: the first PR seen
+		// for a branch is its current one.
+		if _, seen := prs[it.Branch]; seen {
 			continue
 		}
-		pr := &PR{Number: item.Number, Title: item.Title, State: item.State, Head: item.Head, Draft: item.Draft}
-		for _, check := range item.Rollup {
+		pr := &PR{Number: it.Number, Title: it.Title, State: it.State, Head: it.Head, Draft: it.Draft,
+			Branch: it.Branch, Author: it.Author.Login, Bot: it.Author.IsBot, Cross: it.Cross}
+		for _, check := range it.Rollup {
 			switch {
 			case check.Conclusion == "FAILURE" || check.Conclusion == "TIMED_OUT" || check.Conclusion == "CANCELLED" || check.State == "FAILURE" || check.State == "ERROR":
 				pr.Checks = "fail"
@@ -104,11 +141,14 @@ func prsOf(repoPath string, maxAge time.Duration) map[string]*PR {
 				}
 			}
 		}
-		prs[item.Branch] = pr
+		prs[it.Branch] = pr
+		if pr.State == "OPEN" && !pr.Bot {
+			open = append(open, pr)
+		}
 	}
 
-	prByDir[repoPath] = prCache{at: time.Now(), prs: prs}
-	return prs
+	prByDir[repoPath] = prCache{at: time.Now(), prs: prs, open: open}
+	return prs, open
 }
 
 func prOf(repoPath, branch string) *PR {
@@ -155,6 +195,11 @@ func views(withPRs bool) []LaneView {
 				}
 				if view.State != nil && (view.State.Proof != nil || view.State.Checks != nil) {
 					view.Tree = treeOf(view.Path)
+				}
+				if !view.IsMain {
+					for _, app := range touchedApps(view.Lane, cfg) {
+						view.Touched = append(view.Touched, app.Name)
+					}
 				}
 				for _, app := range cfg.Apps {
 					if app.Port == 0 || app.Dev == "" {

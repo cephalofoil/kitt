@@ -15,6 +15,7 @@ const usage = `kitt — lanes for parallel work
         [--prompt t] [--no-agent]  an issue lane starts an agent on the issue; --prompt gives any lane one
         [--apps web,admin]         the apps the lane is about, when not the repo's usual ones
         [--repo r] [--base ref] [--focus] [--no-setup]
+  kitt pr <number>               check an open pull request out as a lane, to look at it before the merge
   kitt agent [lane] [--prompt t] start the lane's agent, or hand the running one a prompt
   kitt ls [--all] [--json]       the lanes
   kitt focus [lane]              go into a lane: its herdr workspace, its dev servers, its app in the emulator
@@ -33,7 +34,7 @@ const usage = `kitt — lanes for parallel work
   kitt link [lane]               link the env files again
   kitt rm <lane> [--force]       remove a lane that holds nothing unsaved
   kitt repo add [path] | list | rm <name>
-  kitt init                      write kitt.toml into the repo from what kitt detects
+  kitt init [--home]             write kitt.toml into the repo from what kitt detects (--home: into kitt's folder)
   kitt detect [path]             print what kitt detects in a repo; registers and writes nothing
   kitt doctor                    what kitt needs and whether it is there
 
@@ -49,7 +50,7 @@ func main() {
 	commands := map[string]func([]string) error{
 		"dash": cmdDash, "new": cmdNew, "ls": cmdLs, "list": cmdLs, "focus": cmdFocus, "up": cmdUp, "down": cmdDown,
 		"emu": cmdEmu, "env": cmdEnv, "check": cmdCheck, "proof": cmdProof, "adopt": cmdAdopt, "link": cmdLink,
-		"rm": cmdRm, "agent": cmdAgent, "open": cmdOpen, "detect": cmdDetect, "repo": cmdRepo, "init": cmdInit, "doctor": cmdDoctor,
+		"rm": cmdRm, "agent": cmdAgent, "pr": cmdPr, "open": cmdOpen, "detect": cmdDetect, "repo": cmdRepo, "init": cmdInit, "doctor": cmdDoctor,
 	}
 	command, ok := commands[os.Args[1]]
 	if !ok {
