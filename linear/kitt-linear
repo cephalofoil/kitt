@@ -1,0 +1,41 @@
+#!/bin/zsh
+# kitt-linear hands a Linear issue to kitt: Linear's "Work on issue → Custom
+# script" runs it with the issue's identifier, branch name, working directory
+# and prompt. kitt makes the lane on that branch (or goes back to the lane that
+# has it) and starts the agent on the prompt; herdr shows it in Terminal
+# (KITT_TERMINAL=iTerm for iTerm).
+#
+# Linear starts it from the app, outside any shell, and does not wait for it:
+# so the PATH is set here, the work runs in the background into a log, and a
+# failure comes back as a notification.
+
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+log="$HOME/Library/Logs/kitt-linear.log"
+terminal="${KITT_TERMINAL:-Terminal}"
+
+notify() {
+  osascript -e 'on run argv' -e 'display notification (item 2 of argv) with title "kitt" subtitle (item 1 of argv)' -e 'end run' "$1" "$2" >/dev/null 2>&1
+}
+
+{
+  print "--- $(date '+%F %T') kitt-linear $*"
+
+  # herdr's server holds the workspaces; without one, a terminal window starts it.
+  if ! herdr workspace list >/dev/null 2>&1; then
+    if [[ $terminal == iTerm* ]]; then
+      osascript -e 'on run argv' -e 'tell application "iTerm" to create window with default profile command (item 1 of argv)' -e 'end run' "$(command -v herdr)"
+    else
+      osascript -e 'on run argv' -e "tell application \"$terminal\" to do script (quoted form of (item 1 of argv))" -e 'end run' "$(command -v herdr)"
+    fi
+    for _ in {1..30}; do
+      herdr workspace list >/dev/null 2>&1 && break
+      sleep 1
+    done
+  fi
+
+  if kitt new "$@" --prompt-env LINEAR_PROMPT --agent --focus; then
+    osascript -e "tell application \"$terminal\" to activate"
+  else
+    notify "$1 failed" "$(tail -n 1 "$log")"
+  fi
+} >>"$log" 2>&1 &!
