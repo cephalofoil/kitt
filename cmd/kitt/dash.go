@@ -405,14 +405,41 @@ func (d dash) View() string {
 			emulator = row.Name
 		}
 	}
-	head := accent.Render("kitt") + dim.Render(fmt.Sprintf("  %d lanes", len(d.rows)-hidden))
+	// The header: the logo, and beside it what matters at a glance, one fact a line.
+	mark := logo(width)
+	lanes := len(d.rows) - hidden
+	first := bold.Render(fmt.Sprintf("%d lanes", lanes))
+	if lanes == 1 {
+		first = bold.Render("1 lane")
+	}
+	if len(d.prs) > 0 {
+		first += dim.Render(fmt.Sprintf(" · %d open PRs without one", len(d.prs)))
+	}
+	if mark != nil && !logoNamesItself(width) {
+		first = accent.Render("kitt") + dim.Render(" · ") + first
+	}
+	second := dim.Render("nobody is waiting for you")
 	if needs > 0 {
-		head += dim.Render(" · ") + red.Render(fmt.Sprintf("%d waiting for you", needs))
+		second = red.Render(fmt.Sprintf("%d waiting for you", needs))
 	}
+	third := dim.Render("emulator free")
 	if emulator != "" {
-		head += dim.Render(" · emulator → ") + cyan.Render(emulator)
+		third = dim.Render("emulator → ") + cyan.Render(emulator)
 	}
-	b.WriteString("\n  " + head + "\n\n")
+	info := []string{first, second, third}
+
+	b.WriteString("\n")
+	if mark == nil {
+		b.WriteString("  " + accent.Render("kitt") + "  " + strings.Join(info, dim.Render(" · ")) + "\n")
+	}
+	for i, line := range mark {
+		// The facts sit against the logo's lower lines.
+		if at := i - (len(mark) - len(info)); at >= 0 {
+			line += "   " + info[at]
+		}
+		b.WriteString("  " + line + "\n")
+	}
+	b.WriteString("\n")
 
 	const nameW, appsW, agentW, gitW, prW, proofW = 26, 14, 10, 10, 13, 12
 	titleW := min(46, max(12, width-(4+nameW+appsW+agentW+gitW+prW+proofW+8+7)))

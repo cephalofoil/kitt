@@ -56,6 +56,23 @@ Under the lanes, the open pull requests that have no lane yet (a bot's are left 
 
 Every key is also a command: `kitt focus`, `kitt agent`, `kitt emu`, `kitt up`, `kitt check`, `kitt proof open`, `kitt adopt`, `kitt rm`. See `kitt help`.
 
+### The header
+
+The dashboard opens with the kitt wordmark and, beside it, three facts: how many lanes there are, whether an agent is waiting for you, and which lane the emulator shows. Below 40 columns the wordmark gives way to the plain name.
+
+`KITT_LOGO` picks another mark; `kitt logo` prints them all:
+
+| Value | |
+|---|---|
+| not set | the wordmark, four lines |
+| `lockup` | the tube beside a narrower wordmark, four lines |
+| `small` | tube and wordmark in three lines |
+| `tube`, `bead` | the tube alone, without or with a bead of putty |
+| `medium`, `large`, `blocks` | other sizes; `blocks` draws the tube with half blocks only |
+| `text` | no logo |
+
+The tube is drawn with Unicode sextants (U+1FB00 and up). A font without them shows boxes there; the wordmark uses only block elements and draws everywhere.
+
 ## How lanes stay apart
 
 - **Ports.** Each lane holds a slot; an app listens on its base port plus ten per slot (Metro 8081 in the main checkout, 8091 in the first lane). `kitt env` prints a lane's ports.
