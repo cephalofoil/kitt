@@ -679,7 +679,8 @@ export const register: Register = on => {
     const files = git?.conflicts ?? []
 
     return (
-      <Box flexDirection="column" width={width}>
+      <Box flexDirection="column">
+        <Box flexDirection="column" width={width}>
         {hasPr && (
           <Box flexDirection="column">
             <Box columnGap={1}>
@@ -813,6 +814,7 @@ export const register: Register = on => {
             <Button key="hide-rebase" plain dimColor hotkey="h" label="Hide" onPress={() => update($, hiddenRebase, () => git.baseSha)} />
           </Box>
         )}
+        </Box>
         {below}
       </Box>
     )
