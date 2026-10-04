@@ -32,7 +32,7 @@ kitt dash --workspace         # the dashboard as its own herdr workspace
 
 kitt new 338                  # lane for issue 338: worktree, branch, env links, install, and an agent started on the issue
 kitt new 412 --apps web       # a lane about the website: starts the web app, leaves the emulator alone
-kitt new cook-mode-proto --prompt "/wayfinder cook mode across several recipes"
+kitt new settings-proto --prompt "/wayfinder settings across several screens"
 ```
 
 In the dashboard, one row per lane: the apps it has changed files of, the agent's state, uncommitted and behind counts, the PR and its checks, the last proof, which dev servers answer, and which lane the emulator shows.
@@ -79,7 +79,7 @@ Detection alone finds the apps (Expo, Next, Vite, anything with a `dev` script, 
 Which apps a lane touched is never stored. kitt reads it from git each time: the files that differ from the base branch, matched to the app whose `dir` they lie in.
 
 ```toml
-name = "schlemm"
+name = "example-app"
 base = "master"
 link = ["apps/mobile/.env", "apps/mobile/.env.supabase.local"]
 
@@ -146,3 +146,7 @@ The tools, as Claude sees them:
 - `mcp__pr-watch__rebase_and_push`: rebases onto the default branch and pushes with lease. A conflicting rebase is undone and answered with the files.
 
 The branch name sits at the end of the hint line. `/pr-watch` opens the full view of the PR. Keys work once the band has focus (click it, or ctrl+x tab).
+
+## License
+
+[MIT](LICENSE)
