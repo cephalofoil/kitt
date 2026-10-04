@@ -1,2 +1,20 @@
 **/.claude-plugin/types/
 *.exe
+
+# Local environment files; keep shareable templates versionable.
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.sample
+!.env.template
+
+# Private keys and credential containers.
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
