@@ -27,7 +27,7 @@ const ASK = {
   commit: 'Commit my changes.',
   ship: 'Push this branch and open a PR.',
   push: 'Push this branch.',
-  rebase: 'Rebase and push this branch onto ',
+  rebase: 'Rebase this branch onto ',
 } as const
 
 const HOW = {
@@ -48,11 +48,15 @@ const HOW = {
     `read them: call again with force_with_lease only when they are this branch's own commits from before a rebase; if they are ` +
     `someone else's work, stop and say so. Answer in one line.`,
   rebase:
-    `Sent by the Rebase key of the pr-watch band. To the person, Rebase means rebased and pushed. Call the tool ${TOOL.rebase}. ` +
+    `Sent by the Rebase key of the pr-watch band. It means: rebase this branch onto the default branch, then push this branch to ` +
+    `its own remote branch, so a PR can be opened or updated. Nothing is pushed to the default branch. Call the tool ${TOOL.rebase}. ` +
     `If it answers that the rebase conflicts, rebase by hand: resolve each conflict only where the right result is clear from both ` +
     `sides, and where it is not, stop with the rebase still open and ask, naming the file and the two versions. After a rebase by ` +
     `hand, call ${TOOL.push} with force_with_lease. Answer in one or two lines.`,
 } as const
+
+/** What the Rebase key sends: the branch goes onto the base, then the branch itself is pushed. */
+const rebaseAsk = (base: string): string => `${ASK.rebase}${base.replace(/^origin\//, '')} and push the branch.`
 
 function howFor(asked: string): string | null {
   if (asked === ASK.commit) return HOW.commit
@@ -196,7 +200,7 @@ async function refreshGit($: EngineInterface) {
       if (pr !== null && pr.state === 'OPEN' && pr.branch === now.branch && autoFor !== key) {
         autoFor = key
         $.ui.toast(`${now.behind} behind ${now.base.replace(/^origin\//, '')}: rebasing (auto-rebase is on)`, { timeoutMs: 8000 })
-        void $.prompt.submit({ text: `${ASK.rebase}${now.base}.` })
+        void $.prompt.submit({ text: rebaseAsk(now.base) })
       }
     }
   } catch (error) {
@@ -477,11 +481,11 @@ async function rebaseTool($: EngineInterface): Promise<Answer> {
 
   const behind = await text($, ['git', 'rev-list', '--count', `HEAD..${git.base}`])
 
-  if (behind === '0') return { result: `${git.branch} is already on top of ${git.base}. Nothing was rebased or pushed.` }
+  const isRebased = behind !== '0'
 
-  const rebased = await run($, ['git', 'rebase', git.base], 180_000)
+  const rebased = isRebased ? await run($, ['git', 'rebase', git.base], 180_000) : null
 
-  if (rebased?.exitCode !== 0) {
+  if (isRebased && rebased?.exitCode !== 0) {
     const files = (await text($, ['git', 'diff', '--name-only', '--diff-filter=U'])) ?? ''
 
     // Back to exactly where the branch was: nothing half-done is left behind.
@@ -495,18 +499,20 @@ async function rebaseTool($: EngineInterface): Promise<Answer> {
     }
   }
 
+  // The branch itself is pushed, to its own remote branch: a first push sets the
+  // upstream, a later one is leased, so it refuses when the remote branch moved
+  // since it was last seen.
   const upstream = await text($, ['git', 'rev-parse', '--abbrev-ref', '@{upstream}'])
-  let outcome = `Rebased ${git.branch} onto ${git.base}. The branch has no upstream, so nothing was pushed.`
-
-  if (upstream !== null) {
-    // The lease refuses when the remote branch moved since it was last seen.
-    const pushed = await run($, ['git', 'push', '--force-with-lease'], 180_000)
-
-    outcome =
-      pushed?.exitCode === 0
-        ? `Rebased ${git.branch} onto ${git.base} and pushed with --force-with-lease. Its commits have new ids.`
-        : `Rebased ${git.branch} onto ${git.base}, but the push was refused: ${why(pushed)}`
-  }
+  const pushed = await run(
+    $,
+    upstream === null ? ['git', 'push', '--set-upstream', 'origin', git.branch] : ['git', 'push', '--force-with-lease'],
+    180_000,
+  )
+  const did = isRebased ? `Rebased ${git.branch} onto ${git.base}` : `${git.branch} was already on top of ${git.base}`
+  const outcome =
+    pushed?.exitCode === 0
+      ? `${did} and pushed it to origin/${git.branch}${isRebased && upstream !== null ? ' with --force-with-lease; its commits have new ids' : ''}. A PR can be opened from it now.`
+      : `${did}, but pushing the branch was refused: ${why(pushed)}`
   await refreshGit($)
   await refreshPr($)
 
@@ -583,7 +589,8 @@ export const register: Register = (on, options) => {
       await $.tool.register({
         name: 'rebase_and_push',
         description:
-          'Rebase the current branch onto the latest default branch and push it with --force-with-lease. A rebase that conflicts is ' +
+          'Rebase the current branch onto the latest default branch, then push that branch to its own remote branch (first push sets the ' +
+          'upstream, a later one uses --force-with-lease). Nothing is pushed to the default branch. A rebase that conflicts is ' +
           'undone and answered with the conflicting files. Needs a clean work tree. Refuses on the default branch.',
         inputSchema: { type: 'object', properties: {} },
       })
@@ -849,7 +856,7 @@ export const register: Register = (on, options) => {
               plain
               hotkey="b"
               label="Rebase & push"
-              onPress={() => void $.prompt.submit({ text: `${ASK.rebase}${git.base}.`, asUser: true })}
+              onPress={() => void $.prompt.submit({ text: rebaseAsk(git.base), asUser: true })}
             />
             <Button key="hide-rebase" plain dimColor hotkey="h" label="Hide" onPress={() => update($, hiddenRebase, () => git.baseSha)} />
           </Box>

@@ -131,7 +131,7 @@ A key never runs git itself. It sends Claude a few words, with the how-to attach
 | uncommitted work | `c` | Claude writes the message the repo asks for and calls `commit`; no push |
 | commits not pushed, no PR yet | `p` | Claude runs the repo's checks, calls `push`, opens the PR |
 | commits not pushed, PR open | `p` | Claude calls `push` |
-| behind the default branch | `b` | Claude calls `rebase_and_push`; on conflicts it rebases by hand and asks where a conflict is not clear |
+| behind the default branch | `b` | Claude calls `rebase_and_push`: the branch is rebased onto the default branch and then pushed to its own remote branch, ready for a PR; on conflicts Claude rebases by hand and asks where a conflict is not clear |
 | the PR is merged | `m` | switches to the default branch, brought up to date (done by the mod; Claude is told) |
 
 **Merging is yours.** No key and no tool merges. When Claude runs `gh pr merge` anyway, the call is held and you are asked; anything but "Merge" refuses it.

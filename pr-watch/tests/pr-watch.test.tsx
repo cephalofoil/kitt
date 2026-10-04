@@ -114,7 +114,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(sent.at(-1)).toBe('Commit my changes.')
 
     await band.press({ key: 'rebase' })
-    expect(sent.at(-1)).toBe('Rebase and push this branch onto origin/main.')
+    expect(sent.at(-1)).toBe('Rebase this branch onto main and push the branch.')
 
     await band.press({ key: 'hide-pr' })
     await band.press({ key: 'hide-rebase' })
