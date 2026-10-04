@@ -79,10 +79,10 @@ func up(lane Lane, only []string, printOnly bool) ([]string, error) {
 		return nil, fail("%s is not a lane yet: kitt adopt %s", lane.Name, lane.Name)
 	}
 	cfg := loadRepoConfig(lane.Main, lane.Path)
-	// Unnamed, `up` starts what every lane needs; a lazy app starts when named.
+	// Unnamed, `up` starts the apps the lane is about; any other starts when named.
 	wanted := func(app App) bool {
 		if len(only) == 0 {
-			return !app.Lazy
+			return lane.wants(app)
 		}
 		for _, name := range only {
 			if name == app.Name {
@@ -181,6 +181,46 @@ func devPane(workspace, dir string, env map[string]string) (string, error) {
 		return "", err
 	}
 	return split.Pane.ID, nil
+}
+
+// cmdOpen opens a lane's web app in the browser.
+func cmdOpen(args []string) error {
+	rest, _ := flags(args)
+	laneArg := ""
+	if len(rest) > 0 {
+		laneArg = rest[0]
+	}
+	lane, err := findLane(laneArg)
+	if err != nil {
+		return err
+	}
+	message, err := openWeb(lane, rest[min(1, len(rest)):])
+	if err != nil {
+		return err
+	}
+	fmt.Println(message)
+	return nil
+}
+
+func openWeb(lane Lane, only []string) (string, error) {
+	cfg := loadRepoConfig(lane.Main, lane.Path)
+	var down []string
+	for _, app := range cfg.Apps {
+		if app.Kind != "web" || (len(only) > 0 && only[0] != app.Name) {
+			continue
+		}
+		port := app.port(lane.Slot)
+		if !listening(port) {
+			down = append(down, fmt.Sprintf("%s (%d)", app.Name, port))
+			continue
+		}
+		url := fmt.Sprintf("http://localhost:%d", port)
+		return "browser → " + lane.Name + " " + app.Name + " " + url, openFile(url)
+	}
+	if len(down) > 0 {
+		return "", fail("no web app of %s is running: %s. Start one with kitt up %s <app>", lane.Name, strings.Join(down, ", "), lane.Name)
+	}
+	return "", fail("%s has no web app", lane.Repo)
 }
 
 // cmdDown stops a lane's dev servers: each app's own stop line, then the dev tab.

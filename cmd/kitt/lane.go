@@ -60,10 +60,14 @@ func lanesOf(repo RepoRef, state State) []Lane {
 
 		lane.Name = filepath.Base(lane.Path)
 		if norm(lane.Path) == norm(repo.Path) {
-			lane.IsMain, lane.Managed, lane.Slot, lane.Name = true, true, 0, "main"
+			lane.IsMain, lane.Managed, lane.Slot = true, true, 0
 		}
 		if kept, ok := state.Lanes[lane.key()]; ok {
 			lane.Managed, lane.Slot, lane.Name, lane.State = true, kept.Slot, kept.Name, kept
+		}
+		if lane.IsMain {
+			// The repo's own checkout goes by the name of its base branch.
+			lane.Name = baseOf(repo.Path)
 		}
 		lanes = append(lanes, lane)
 	}
@@ -118,7 +122,7 @@ func findLane(arg string) (Lane, error) {
 
 	var matches []Lane
 	for _, lane := range lanes {
-		if arg == lane.Name || arg == lane.Repo+"/"+lane.Name || arg == lane.Branch || norm(arg) == lane.key() {
+		if arg == lane.Name || arg == lane.Repo+"/"+lane.Name || arg == lane.Branch || norm(arg) == lane.key() || (lane.IsMain && arg == "main") {
 			matches = append(matches, lane)
 		}
 	}
@@ -170,6 +174,42 @@ func findRepo(name string) (RepoRef, error) {
 		return RepoRef{}, fail("no repos registered: run `kitt repo add` inside a repo")
 	}
 	return RepoRef{}, fail("several repos are registered: pass --repo <name>")
+}
+
+var bases = map[string]string{}
+
+// baseOf is a repo's base branch, read once per run.
+func baseOf(repoPath string) string {
+	if base, ok := bases[repoPath]; ok {
+		return base
+	}
+	bases[repoPath] = loadRepoConfig(repoPath, "").Base
+	return bases[repoPath]
+}
+
+// wants says whether an app is one of those the lane runs by default: the ones
+// it was made for, or with none named, every app that is not lazy.
+func (l Lane) wants(app App) bool {
+	if l.State == nil || len(l.State.Apps) == 0 {
+		return !app.Lazy
+	}
+	for _, name := range l.State.Apps {
+		// What the lane's app talks to runs along: a shared backend, a database.
+		if name == app.Name || (app.Shared && !app.Lazy) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasExpo says whether the lane runs a phone app, which is what the emulator is for.
+func (l Lane) hasExpo(cfg RepoConfig) bool {
+	for _, app := range cfg.Apps {
+		if app.Kind == "expo" && l.wants(app) {
+			return true
+		}
+	}
+	return false
 }
 
 // --- kitt repo ---------------------------------------------------------------
@@ -271,8 +311,12 @@ func cmdInit(args []string) error {
 
 func cmdNew(args []string) error {
 	rest, opts := flags(args, "agent", "no-agent", "focus", "no-setup")
+	var apps []string
+	if opts["apps"] != "" {
+		apps = strings.Split(opts["apps"], ",")
+	}
 	if len(rest) == 0 {
-		return fail("usage: kitt new <issue number | name> [--repo r] [--base ref] [--agent | --no-agent] [--prompt text] [--focus]")
+		return fail("usage: kitt new <issue number | name> [--repo r] [--base ref] [--apps web,admin] [--agent | --no-agent] [--prompt text] [--focus]")
 	}
 	repo, err := findRepo(opts["repo"])
 	if err != nil {
@@ -280,7 +324,12 @@ func cmdNew(args []string) error {
 	}
 	cfg := loadRepoConfig(repo.Path, "")
 
-	entry := LaneState{Repo: repo.Name, Created: time.Now()}
+	for _, name := range apps {
+		if cfg.app(name) == nil {
+			return fail("%s has no app named %q", repo.Name, name)
+		}
+	}
+	entry := LaneState{Repo: repo.Name, Created: time.Now(), Apps: apps}
 	name := slug(strings.Join(rest, " "), 40)
 	if isNumber(rest[0]) {
 		var issue struct {
@@ -495,14 +544,14 @@ func linkFiles(lane Lane, cfg RepoConfig, out io.Writer) {
 	fmt.Fprintf(out, "  link    %d linked, %d already in place\n", linked, kept)
 }
 
-// setupLane prepares a fresh lane: the repo's setup lines, then each app's own,
-// except the apps marked lazy, which are set up when first started or checked.
+// setupLane prepares a fresh lane: the repo's setup lines, then the setup of
+// the apps the lane is about. The others are set up when first started or checked.
 func setupLane(lane Lane, cfg RepoConfig) {
 	for _, line := range cfg.Setup {
 		runSetup(lane.Path, cfg.expand(line, App{}, lane))
 	}
 	for _, app := range cfg.Apps {
-		if !app.Lazy {
+		if lane.wants(app) {
 			ensureSetup(lane, cfg, app)
 		}
 	}
@@ -740,4 +789,25 @@ func unsafeToRemove(lane Lane, cfg RepoConfig) string {
 		return ""
 	}
 	return fmt.Sprintf("it has %s commits that are not pushed or merged", ahead)
+}
+
+// cmdDetect prints what kitt would configure for a repo, without registering
+// it or writing anything: a look before `kitt repo add` and `kitt init`.
+func cmdDetect(args []string) error {
+	rest, _ := flags(args)
+	dir := "."
+	if len(rest) > 0 {
+		dir = rest[0]
+	}
+	top, err := run(dir, "git", "rev-parse", "--show-toplevel")
+	if err != nil {
+		return fail("%s is not a git repository", dir)
+	}
+	if common, err := run(top, "git", "rev-parse", "--path-format=absolute", "--git-common-dir"); err == nil {
+		top = filepath.Dir(common)
+	}
+	top = filepath.Clean(filepath.FromSlash(top))
+	cfg := loadRepoConfig(top, "")
+	fmt.Printf("# %s\n# source: %s\n\n%s", top, cfg.Source, renderConfig(cfg))
+	return nil
 }

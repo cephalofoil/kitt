@@ -14,17 +14,19 @@ type State struct {
 }
 
 type LaneState struct {
-	Repo    string       `json:"repo"`
-	Name    string       `json:"name"`
-	Path    string       `json:"path"`
-	Slot    int          `json:"slot"`
-	Issue   int          `json:"issue,omitempty"`
-	Title   string       `json:"title,omitempty"`
-	URL     string       `json:"url,omitempty"`
-	Created time.Time    `json:"created"`
-	Setup   []string     `json:"setup,omitempty"`
-	Checks  *CheckResult `json:"checks,omitempty"`
-	Proof   *ProofState  `json:"proof,omitempty"`
+	Repo    string    `json:"repo"`
+	Name    string    `json:"name"`
+	Path    string    `json:"path"`
+	Slot    int       `json:"slot"`
+	Issue   int       `json:"issue,omitempty"`
+	Title   string    `json:"title,omitempty"`
+	URL     string    `json:"url,omitempty"`
+	Created time.Time `json:"created"`
+	Setup   []string  `json:"setup,omitempty"`
+	// Apps are the apps this lane is about; empty means the repo's usual ones.
+	Apps   []string     `json:"apps,omitempty"`
+	Checks *CheckResult `json:"checks,omitempty"`
+	Proof  *ProofState  `json:"proof,omitempty"`
 }
 
 type EmuState struct {

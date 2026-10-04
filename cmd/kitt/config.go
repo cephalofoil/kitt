@@ -132,7 +132,7 @@ func loadRepoConfig(mainRoot, laneRoot string) RepoConfig {
 		cfg.Base = detectBase(mainRoot)
 	}
 	if cfg.BranchPrefix == "" {
-		cfg.BranchPrefix = "agent/"
+		cfg.BranchPrefix = "feat/"
 	}
 	if cfg.Lanes == "" {
 		cfg.Lanes = "../" + filepath.Base(mainRoot) + "-lanes"
@@ -288,7 +288,7 @@ func detectApps(root string) []App {
 			name = filepath.Base(root)
 		}
 
-		if app, ok := detectNode(dir); ok {
+		if app, ok := detectNode(root, dir); ok {
 			app.Name, app.Dir = name, rel
 			if app.Kind == "web" {
 				app.Port = webPort
@@ -312,16 +312,57 @@ func detectApps(root string) []App {
 	}
 	walk(root, 0)
 
+	// A web app waits to be named only where a phone app is the main thing.
+	hasExpo := false
+	for _, app := range apps {
+		hasExpo = hasExpo || app.Kind == "expo"
+	}
+	backendPort := 8000
+	for i := range apps {
+		if apps[i].Kind == "web" && !hasExpo {
+			apps[i].Lazy = false
+		}
+		if apps[i].Kind == "backend" && apps[i].Port != 0 {
+			apps[i].Port = backendPort
+			backendPort++
+		}
+	}
+
 	return apps
 }
 
-func detectNode(dir string) (App, bool) {
+// packageManager is read from the nearest lockfile from dir up to root:
+// in a workspace the lockfile sits at the root, not beside the app.
+func packageManager(root, dir string) (string, string) {
+	for at := dir; ; at = filepath.Dir(at) {
+		switch {
+		case exists(filepath.Join(at, "bun.lock")) || exists(filepath.Join(at, "bun.lockb")):
+			return "bun", "bunx"
+		case exists(filepath.Join(at, "pnpm-lock.yaml")):
+			return "pnpm", "pnpm exec"
+		case exists(filepath.Join(at, "yarn.lock")):
+			return "yarn", "yarn"
+		case exists(filepath.Join(at, "package-lock.json")):
+			return "npm", "npx"
+		}
+		if norm(at) == norm(root) || filepath.Dir(at) == at {
+			return "npm", "npx"
+		}
+	}
+}
+
+func detectNode(root, dir string) (App, bool) {
 	var pkg struct {
 		Scripts         map[string]string `json:"scripts"`
 		Dependencies    map[string]string `json:"dependencies"`
 		DevDependencies map[string]string `json:"devDependencies"`
+		Workspaces      any               `json:"workspaces"`
 	}
 	if readJSON(filepath.Join(dir, "package.json"), &pkg) != nil {
+		return App{}, false
+	}
+	// A workspace root runs its members; it is not an app itself.
+	if pkg.Workspaces != nil || exists(filepath.Join(dir, "pnpm-workspace.yaml")) {
 		return App{}, false
 	}
 	has := func(dep string) bool {
@@ -330,15 +371,7 @@ func detectNode(dir string) (App, bool) {
 		return a || b
 	}
 
-	pm, px := "npm", "npx"
-	switch {
-	case exists(filepath.Join(dir, "bun.lock")) || exists(filepath.Join(dir, "bun.lockb")):
-		pm, px = "bun", "bunx"
-	case exists(filepath.Join(dir, "pnpm-lock.yaml")):
-		pm, px = "pnpm", "pnpm exec"
-	case exists(filepath.Join(dir, "yarn.lock")):
-		pm, px = "yarn", "yarn"
-	}
+	pm, px := packageManager(root, dir)
 
 	var app App
 	switch {
@@ -355,11 +388,17 @@ func detectNode(dir string) (App, bool) {
 		app.Kind, app.Lazy = "web", true
 		app.Dev = px + " vite --port {port}"
 	default:
-		return App{}, false
+		// Anything else with a dev script is a service or a desktop shell: it
+		// starts with that script, and its port, if it has one, is for kitt.toml.
+		if _, ok := pkg.Scripts["dev"]; !ok {
+			return App{}, false
+		}
+		app.Kind, app.Lazy = "backend", true
+		app.Dev = pm + " run dev"
 	}
 
 	app.Setup = []string{pm + " install"}
-	for _, script := range []string{"typecheck", "lint", "test"} {
+	for _, script := range []string{"typecheck", "type-check", "lint", "test"} {
 		if _, ok := pkg.Scripts[script]; ok {
 			app.Checks = append(app.Checks, pm+" run "+script)
 		}

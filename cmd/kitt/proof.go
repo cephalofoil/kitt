@@ -152,7 +152,7 @@ func cmdProof(args []string) error {
 
 func proofBegin(lane Lane, opts map[string]string) error {
 	cfg := loadRepoConfig(lane.Main, lane.Path)
-	useEmulator := cfg.expo() != nil && opts["no-emulator"] == ""
+	useEmulator := lane.hasExpo(cfg) && opts["no-emulator"] == ""
 
 	if useEmulator {
 		wait := 10 * time.Minute

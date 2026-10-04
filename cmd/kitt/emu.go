@@ -109,7 +109,16 @@ func focus(lane Lane, agentPane string) []string {
 			_ = herdr(nil, "agent", "focus", agentPane)
 		}
 	}
-	if cfg := loadRepoConfig(lane.Main, lane.Path); cfg.expo() != nil && lane.Managed {
+	cfg := loadRepoConfig(lane.Main, lane.Path)
+	if lane.Managed && !lane.hasExpo(cfg) {
+		// A lane without a phone app: start what it runs, nothing to load into the emulator.
+		if lines, err := up(lane, nil, false); err != nil {
+			notes = append(notes, "dev servers: "+err.Error())
+		} else {
+			notes = append(notes, strings.Join(lines, " · "))
+		}
+	}
+	if lane.Managed && lane.hasExpo(cfg) {
 		// Going into a lane means seeing its app: start what is not running and wait for Metro.
 		if port := cfg.expo().port(lane.Slot); !listening(port) {
 			if _, err := up(lane, nil, false); err != nil {

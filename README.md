@@ -27,6 +27,7 @@ kitt repo add                 # once, inside the repo
 kitt dash --workspace         # the dashboard as its own herdr workspace
 
 kitt new 338                  # lane for issue 338: worktree, branch, env links, install, and an agent started on the issue
+kitt new 412 --apps web       # a lane about the website: starts the web app, leaves the emulator alone
 kitt new cook-mode-proto --prompt "/wayfinder cook mode across several recipes"
 ```
 
@@ -37,6 +38,7 @@ In the dashboard, one row per lane: the agent's state, uncommitted and behind co
 | `enter` | go into the lane: its herdr workspace and agent, its dev servers started, its app in the emulator |
 | `g` | start the lane's agent (on its issue, if it has one) |
 | `e` | only point the emulator at the lane |
+| `o` | open the lane's web app in the browser |
 | `u` / `d` | start / stop the lane's dev servers |
 | `c` | run the repo's checks for the apps the lane touched |
 | `p` | open the lane's proof |
@@ -56,7 +58,7 @@ Every key is also a command: `kitt focus`, `kitt agent`, `kitt emu`, `kitt up`, 
 
 ## kitt.toml
 
-Everything project-specific lives in the repo. Without a `kitt.toml`, kitt detects the apps (Expo, Next, Vite, a Python backend), their checks from `package.json` scripts, and the `.env` files to link; `kitt init` writes that down to edit.
+Everything project-specific lives in the repo. Without a `kitt.toml`, kitt detects the apps (Expo, Next, Vite, a Python backend), their checks from `package.json` scripts, and the `.env` files to link; `kitt init` writes that down to edit, and `kitt detect <path>` prints it for any repo without registering or writing anything.
 
 ```toml
 name = "schlemm"

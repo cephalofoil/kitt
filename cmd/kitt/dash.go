@@ -215,6 +215,16 @@ func (d dash) pressed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return say(row.Name + " is not a lane yet: press a to adopt it")
 		}
 		return start("agent for "+row.Name, "agent", target)
+	case "o":
+		lane := row.Lane
+		d.busy = "browser → " + row.Name
+		return d, func() tea.Msg {
+			message, err := openWeb(lane, nil)
+			if err != nil {
+				return doneMsg(err.Error())
+			}
+			return doneMsg(message)
+		}
 	case "u":
 		return start("starting dev servers of "+row.Name, "up", target)
 	case "d":
@@ -259,7 +269,11 @@ func (d dash) typed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			d.held = ""
 			return d, nil
 		}
+		// "412 web admin": an issue, then the apps the lane is about.
 		args := []string{"new", input, "--repo", repo}
+		if words := strings.Fields(input); len(words) > 1 && isNumber(words[0]) {
+			args = []string{"new", words[0], "--repo", repo, "--apps", strings.Join(words[1:], ",")}
+		}
 		if mode == "new-agent" {
 			args = append(args, "--agent")
 		}
@@ -385,7 +399,7 @@ func (d dash) View() string {
 		if d.mode == "new-agent" {
 			what = "new lane with an agent"
 		}
-		b.WriteString("  " + accent.Render(what) + dim.Render(" · an issue number starts an agent on it, a name only makes the lane: ") + d.input + "▏\n")
+		b.WriteString("  " + accent.Render(what) + dim.Render(" · issue number (plus apps, like \"412 web\") or a name: ") + d.input + "▏\n")
 	case d.mode == "remove" && d.cursor < len(rows):
 		b.WriteString("  " + red.Render("remove "+rows[d.cursor].Name+"?") + dim.Render(" y removes the worktree · any other key keeps it") + "\n")
 	case d.mode == "force":
@@ -405,7 +419,7 @@ func (d dash) View() string {
 // legend lists every key, wrapped to the pane: a narrow split must not cut one off.
 func legend(width int) string {
 	keys := [][2]string{
-		{"enter", "open lane"}, {"e", "emulator"}, {"g", "agent"}, {"u", "up"}, {"d", "down"}, {"c", "check"},
+		{"enter", "open lane"}, {"e", "emulator"}, {"o", "browser"}, {"g", "agent"}, {"u", "up"}, {"d", "down"}, {"c", "check"},
 		{"p", "proof"}, {"n", "new"}, {"a", "adopt"}, {"x", "remove"}, {"t", "all worktrees"}, {"q", "quit"},
 	}
 	var b strings.Builder
