@@ -32,6 +32,7 @@ const usage = `kitt — lanes for parallel work
   kitt proof open [lane]         look at a lane's proof
   kitt adopt [lane|path]         make an existing worktree a lane
   kitt link [lane]               link the env files again
+  kitt setup [lane]              install what the lane runs and is not installed yet
   kitt rm <lane> [--force]       remove a lane that holds nothing unsaved
   kitt repo add [path] | list | rm <name>
   kitt init [path]               set a repo up: what kitt detects, shown piece by piece to keep, edit or drop
@@ -52,7 +53,7 @@ func main() {
 	commands := map[string]func([]string) error{
 		"dash": cmdDash, "new": cmdNew, "ls": cmdLs, "list": cmdLs, "focus": cmdFocus, "up": cmdUp, "down": cmdDown,
 		"emu": cmdEmu, "env": cmdEnv, "check": cmdCheck, "proof": cmdProof, "adopt": cmdAdopt, "link": cmdLink,
-		"rm": cmdRm, "agent": cmdAgent, "pr": cmdPr, "open": cmdOpen, "detect": cmdDetect, "repo": cmdRepo, "init": cmdInit, "doctor": cmdDoctor,
+		"rm": cmdRm, "agent": cmdAgent, "setup": cmdSetup, "pr": cmdPr, "open": cmdOpen, "detect": cmdDetect, "repo": cmdRepo, "init": cmdInit, "doctor": cmdDoctor,
 	}
 	command, ok := commands[os.Args[1]]
 	if !ok {

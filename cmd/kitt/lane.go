@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -544,34 +545,103 @@ func setupLane(lane Lane, cfg RepoConfig) {
 	}
 }
 
+// --- Setup: installing a lane's dependencies -----------------------------------
+
+// Two installs at once fight over the package manager's cache (EBUSY on
+// Windows), so setup runs one lane at a time, whichever kitt process starts it.
+type setupLock struct {
+	Lane string    `json:"lane"`
+	At   time.Time `json:"at"`
+}
+
+const setupStale = 20 * time.Minute
+
+func setupLockPath() string { return filepath.Join(configDir(), "setup.lock") }
+
+// setupHolder is the lane installing right now, or "".
+func setupHolder() string {
+	var held setupLock
+	if readJSON(setupLockPath(), &held) != nil || time.Since(held.At) > setupStale {
+		return ""
+	}
+	return held.Lane
+}
+
+// acquireSetup waits for the install lock and returns what releases it.
+func acquireSetup(lane Lane) func() {
+	path := setupLockPath()
+	_ = os.MkdirAll(configDir(), 0o755)
+	announced := false
+	for {
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if err == nil {
+			_ = json.NewEncoder(file).Encode(setupLock{Lane: lane.key(), At: time.Now()})
+			file.Close()
+			return func() { _ = os.Remove(path) }
+		}
+		var held setupLock
+		if readJSON(path, &held) != nil {
+			// Being written this instant, or broken: look again before judging it.
+			time.Sleep(300 * time.Millisecond)
+			if readJSON(path, &held) != nil {
+				_ = os.Remove(path)
+			}
+			continue
+		}
+		if time.Since(held.At) > setupStale {
+			_ = os.Remove(path)
+			continue
+		}
+		if !announced {
+			fmt.Printf("  setup   waiting: another lane is installing (%s)\n", filepath.Base(held.Lane))
+			announced = true
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+// runSetup runs one setup line. A file another process holds for a moment
+// (EBUSY, EPERM on Windows) gets one more try before it counts as failed.
 func runSetup(dir, line string) bool {
-	fmt.Printf("  setup   %s  (%s)\n", line, filepath.Base(dir))
-	cmd := shell(dir, line)
-	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
-	if err := cmd.Run(); err != nil {
+	for attempt := 1; ; attempt++ {
+		fmt.Printf("  setup   %s  (%s)\n", line, filepath.Base(dir))
+		var seen bytes.Buffer
+		cmd := shell(dir, line)
+		cmd.Stdout = io.MultiWriter(os.Stderr, &seen)
+		cmd.Stderr = cmd.Stdout
+		err := cmd.Run()
+		if err == nil {
+			return true
+		}
+		busy := strings.Contains(seen.String(), "EBUSY") || strings.Contains(seen.String(), "EPERM")
+		if attempt == 1 && busy {
+			fmt.Println("  setup   files were busy: trying once more in a moment")
+			time.Sleep(4 * time.Second)
+			continue
+		}
 		fmt.Printf("  setup   failed: %v\n", err)
 		return false
 	}
-	return true
 }
 
-// ensureSetup runs an app's setup lines once per lane. The main checkout and
-// shared apps are the person's own to set up.
-func ensureSetup(lane Lane, cfg RepoConfig, app App) {
-	if lane.IsMain || app.Shared || len(app.Setup) == 0 {
-		return
+// ensureSetup runs an app's setup lines once per lane, and says whether the
+// app is set up. The main checkout and shared apps are the person's own.
+func ensureSetup(lane Lane, cfg RepoConfig, app App) bool {
+	if lane.IsMain || app.Shared || len(app.Setup) == 0 || setupDone(lane, app) {
+		return true
 	}
-	if entry := loadState().Lanes[lane.key()]; entry != nil {
-		for _, done := range entry.Setup {
-			if done == app.Name {
-				return
-			}
-		}
+	release := acquireSetup(lane)
+	defer release()
+	// Another process may have finished it while this one waited.
+	if setupDone(lane, app) {
+		return true
 	}
+
 	dir := filepath.Join(lane.Path, filepath.FromSlash(app.Dir))
 	for _, line := range app.Setup {
 		if !runSetup(dir, cfg.expand(line, app, lane)) {
-			return
+			fmt.Printf("%s is not installed in %s: `kitt setup %s` tries again\n", app.Name, lane.Name, lane.Name)
+			return false
 		}
 	}
 	_ = updateState(func(s *State) {
@@ -579,6 +649,61 @@ func ensureSetup(lane Lane, cfg RepoConfig, app App) {
 			entry.Setup = append(entry.Setup, app.Name)
 		}
 	})
+	return true
+}
+
+func setupDone(lane Lane, app App) bool {
+	if entry := loadState().Lanes[lane.key()]; entry != nil {
+		for _, done := range entry.Setup {
+			if done == app.Name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// missingSetup names the apps a lane runs that are not installed in it.
+func missingSetup(lane Lane, cfg RepoConfig) []string {
+	if lane.IsMain || !lane.Managed {
+		return nil
+	}
+	var missing []string
+	for _, app := range cfg.Apps {
+		if lane.wants(app) && !app.Shared && len(app.Setup) > 0 {
+			done := false
+			if lane.State != nil {
+				for _, name := range lane.State.Setup {
+					done = done || name == app.Name
+				}
+			}
+			if !done {
+				missing = append(missing, app.Name)
+			}
+		}
+	}
+	return missing
+}
+
+// cmdSetup installs what a lane runs and is not installed yet.
+func cmdSetup(args []string) error {
+	rest, _ := flags(args)
+	lane, err := findLane(strings.Join(rest, ""))
+	if err != nil {
+		return err
+	}
+	cfg := loadRepoConfig(lane.Main, lane.Path)
+	var failed []string
+	for _, app := range cfg.Apps {
+		if lane.wants(app) && !ensureSetup(lane, cfg, app) {
+			failed = append(failed, app.Name)
+		}
+	}
+	if len(failed) > 0 {
+		return fail("install failed for %s in %s", strings.Join(failed, ", "), lane.Name)
+	}
+	fmt.Printf("%s is installed\n", lane.Name)
+	return nil
 }
 
 // --- kitt adopt / link / rm --------------------------------------------------

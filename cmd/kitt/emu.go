@@ -150,9 +150,12 @@ func cmdFocus(args []string) error {
 			pane = view.AgentPane
 		}
 	}
-	for _, note := range focus(lane, pane) {
-		fmt.Println(note)
+	notes := focus(lane, pane)
+	if len(notes) == 0 {
+		notes = []string{"opened " + lane.Name}
 	}
+	// One line: it is what the dashboard shows when this ran for a key press.
+	fmt.Println(strings.Join(notes, " · "))
 	return nil
 }
 

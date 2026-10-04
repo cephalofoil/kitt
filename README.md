@@ -43,6 +43,7 @@ In the dashboard, one row per lane: the apps it has changed files of, the agent'
 | `g` | start the lane's agent (on its issue, if it has one) |
 | `e` | only point the emulator at the lane |
 | `o` | open the lane's web app in the browser |
+| `i` | install what the lane runs, when a lane shows `no install` (installs run one lane at a time) |
 | `u` / `d` | start / stop the lane's dev servers |
 | `c` | run the repo's checks for the apps the lane touched |
 | `p` | open the lane's proof |

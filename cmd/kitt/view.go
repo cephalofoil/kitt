@@ -43,6 +43,8 @@ type LaneView struct {
 	InEmulator bool
 	// Touched are the apps the lane changed files of, against its base branch.
 	Touched []string
+	// Install is "" when the lane's apps are installed, else "installing" or "missing".
+	Install string
 }
 
 type prCache struct {
@@ -162,6 +164,7 @@ var agentRank = map[string]int{"blocked": 5, "done": 4, "working": 3, "idle": 2,
 func views(withPRs bool) []LaneView {
 	state := loadState()
 	agents := herdrAgents()
+	installing := setupHolder()
 	var out []LaneView
 
 	for _, repo := range loadGlobal().Repos {
@@ -230,6 +233,12 @@ func views(withPRs bool) []LaneView {
 				view.PR = prs[view.Branch]
 			}
 			view.InEmulator = state.Emulator != nil && state.Emulator.Lane == view.key()
+			if len(missingSetup(view.Lane, cfg)) > 0 {
+				view.Install = "missing"
+				if installing == view.key() {
+					view.Install = "installing"
+				}
+			}
 		}
 		out = append(out, rows...)
 	}

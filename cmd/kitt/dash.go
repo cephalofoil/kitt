@@ -235,7 +235,7 @@ func (d dash) pressed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				return doneMsg("opened PR #" + number)
 			}
-		case "e", "g", "u", "d", "c", "p", "a", "x":
+		case "e", "g", "i", "u", "d", "c", "p", "a", "x":
 			return say("PR #" + number + " has no lane yet: enter checks it out")
 		}
 		return d, nil
@@ -250,9 +250,8 @@ func (d dash) pressed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !row.Managed {
 			return say(row.Name + " is not a lane yet: press a to adopt it")
 		}
-		lane, pane := row.Lane, row.AgentPane
-		d.busy = "opening " + row.Name
-		return d, func() tea.Msg { return doneMsg(strings.Join(focus(lane, pane), " · ")) }
+		// Its own process: an install it has to run first must not write over this screen.
+		return start("opening "+row.Name, "focus", target)
 	case "e":
 		lane := row.Lane
 		d.busy = "emulator → " + row.Name
@@ -278,6 +277,11 @@ func (d dash) pressed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return doneMsg(message)
 		}
+	case "i":
+		if !row.Managed {
+			return say(row.Name + " is not a lane yet: press a to adopt it")
+		}
+		return start("installing "+row.Name, "setup", target)
 	case "u":
 		return start("starting dev servers of "+row.Name, "up", target)
 	case "d":
@@ -498,7 +502,7 @@ func (d dash) View() string {
 // legend lists every key, wrapped to the pane: a narrow split must not cut one off.
 func legend(width int) string {
 	keys := [][2]string{
-		{"enter", "open lane"}, {"e", "emulator"}, {"o", "browser"}, {"g", "agent"}, {"u", "up"}, {"d", "down"}, {"c", "check"},
+		{"enter", "open lane"}, {"e", "emulator"}, {"o", "browser"}, {"g", "agent"}, {"i", "install"}, {"u", "up"}, {"d", "down"}, {"c", "check"},
 		{"p", "proof"}, {"n", "new"}, {"a", "adopt"}, {"x", "remove"}, {"t", "all worktrees"}, {"q", "quit"},
 	}
 	var b strings.Builder
@@ -584,6 +588,13 @@ func prCell(row LaneView, width int) string {
 }
 
 func proofCell(row LaneView, width int) string {
+	// A lane that cannot run yet says so before anything else.
+	switch row.Install {
+	case "installing":
+		return yellow.Render(cut("installing…", width))
+	case "missing":
+		return red.Render(cut("no install·i", width))
+	}
 	text := proofText(row)
 	if text == "-" {
 		text = ""

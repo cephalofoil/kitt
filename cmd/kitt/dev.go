@@ -118,7 +118,10 @@ func up(lane Lane, only []string, printOnly bool) ([]string, error) {
 			lines = append(lines, fmt.Sprintf("%-8s cd %s && %s%s", app.Name, dir, envPrefix(env), command))
 			continue
 		}
-		ensureSetup(lane, cfg, app)
+		if !ensureSetup(lane, cfg, app) {
+			lines = append(lines, fmt.Sprintf("%-8s not started: its install failed (kitt setup %s)", app.Name, lane.Name))
+			continue
+		}
 		if workspace == "" {
 			if workspace, _ = herdrOpen(lane, false); workspace == "" {
 				return lines, fail("could not open %s in herdr", lane.Name)
