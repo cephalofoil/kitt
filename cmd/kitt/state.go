@@ -30,9 +30,10 @@ type LaneState struct {
 }
 
 type EmuState struct {
-	Lane string    `json:"lane"`
-	Port int       `json:"port"`
-	At   time.Time `json:"at"`
+	Lane   string    `json:"lane"`
+	Port   int       `json:"port"`
+	Device string    `json:"device,omitempty"`
+	At     time.Time `json:"at"`
 }
 
 type CheckResult struct {

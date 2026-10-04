@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 )
 
 const usage = `kitt — lanes for parallel work
@@ -41,6 +42,10 @@ const usage = `kitt — lanes for parallel work
   kitt detect [path]             print what kitt detects in a repo; registers and writes nothing
   kitt doctor                    what kitt needs and whether it is there
   kitt logo                      the dashboard's logo in its variants (KITT_LOGO picks one)
+
+The emulator is an Android emulator through adb or, on a Mac, a booted iOS simulator;
+kitt picks the one running (Android first). KITT_PLATFORM=android|ios, or platform in
+kitt.toml's [emulator], chooses.
 
 A lane is named by its name, <repo>/<name>, its issue number, or nothing at all
 inside its directory.
@@ -80,10 +85,25 @@ func cmdDoctor([]string) error {
 		fmt.Printf("%s %-9s %s\n", mark, name, detail)
 	}
 	for _, tool := range []struct{ name, why string }{
-		{"git", "worktrees"}, {"gh", "issues and pull requests"}, {"herdr", "workspaces and agents"}, {"adb", "the emulator"},
+		{"git", "worktrees"}, {"gh", "issues and pull requests"}, {"herdr", "workspaces and agents"},
 	} {
 		path, err := exec.LookPath(tool.name)
 		line(err == nil, tool.name, tool.why+"  "+path)
+	}
+	// The phone app runs on an Android emulator through adb or, on a Mac, an iOS
+	// simulator through simctl; one of them is enough.
+	adb, adbErr := exec.LookPath("adb")
+	if runtime.GOOS == "darwin" {
+		xcrun, simErr := exec.LookPath("xcrun")
+		line(adbErr == nil || simErr == nil, "adb", "Android emulator  "+orText(adb, "not installed (optional with the iOS simulator)"))
+		line(simErr == nil, "simctl", "iOS simulator  "+orText(xcrun, "install Xcode"))
+	} else {
+		line(adbErr == nil, "adb", "the emulator  "+adb)
+	}
+	if dev, err := pickDevice(RepoConfig{}); err == nil {
+		line(true, "device", dev.String()+"  (KITT_PLATFORM=android|ios to choose)")
+	} else {
+		line(false, "device", err.Error())
 	}
 	line(hasHerdr(), "herdr up", "the herdr server answers")
 
@@ -99,4 +119,11 @@ func cmdDoctor([]string) error {
 	repos := loadGlobal().Repos
 	line(len(repos) > 0, "repos", fmt.Sprintf("%d registered  (%s)", len(repos), configDir()))
 	return nil
+}
+
+func orText(value, otherwise string) string {
+	if value == "" {
+		return otherwise
+	}
+	return value
 }

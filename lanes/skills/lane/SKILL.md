@@ -37,11 +37,13 @@ The checks are the repo's own (kitt.toml). Fix what fails; do not report done ov
 
 ## Prove a change that is visible in the app
 
-The emulator is one device for all lanes. A proof takes it, loads this lane's app, and gives it back.
+The emulator is one device for all lanes: an Android emulator through adb, or on a Mac a booted iOS simulator. kitt picks whichever runs (Android first); `KITT_PLATFORM=ios` or `android` chooses. A proof takes it, loads this lane's app, and gives it back.
 
 ```bash
 kitt proof begin                 # waits for the emulator, loads this lane's bundle, prints the repo's proof guide
-# drive the app with adb: input tap / swipe / text, uiautomator dump for coordinates
+# drive the app; begin prints how for the device it picked:
+#   Android: adb shell input tap / swipe / text, uiautomator dump for coordinates
+#   iOS: axe or idb when installed (tap, type, describe-ui); else deep links: xcrun simctl openurl <udid> <scheme>://<path>
 kitt proof shot "recipe with one section"     # one shot per state worth showing; prints the file, read it to verify
 kitt proof end --pass            # or: --fail --note "what is wrong"
 ```

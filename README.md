@@ -21,7 +21,7 @@ go build -o ~/.local/bin/kitt.exe ./cmd/kitt     # any directory on PATH
 /plugin install lanes@kitt
 ```
 
-`kitt doctor` says what is missing (git, gh, herdr, adb, symlinks).
+`kitt doctor` says what is missing (git, gh, herdr, adb or the iOS simulator, symlinks) and which device kitt would use.
 
 ## A day with it
 
@@ -77,7 +77,10 @@ The tube is drawn with Unicode sextants (U+1FB00 and up). A font without them sh
 
 - **Ports.** Each lane holds a slot; an app listens on its base port plus ten per slot (Metro 8081 in the main checkout, 8091 in the first lane). `kitt env` prints a lane's ports.
 - **Env files.** The gitignored files named under `link` are symlinks into the main checkout, so every lane sees the same secrets and an edit reaches all of them.
-- **The emulator.** One device, one installed dev client. `kitt emu` reverses the lane's ports into it and sends the client to the lane's Metro; no native build. A proof holds a lock, so two agents never load over each other.
+- **The emulator.** One device, one installed dev client. `kitt emu` makes the lane's ports reach it and sends the client to the lane's Metro; no native build. A proof holds a lock, so two agents never load over each other.
+  - Android (any OS): an emulator or phone through `adb`; the ports are `adb reverse`d.
+  - iOS (Mac only): a booted simulator through `xcrun simctl`; it shares the Mac's network, so nothing is reversed. Screenshots come from `simctl io screenshot`.
+  - kitt uses whichever is running, an attached Android device first. `platform = "ios"` (or `"android"`) under `[emulator]`, or `KITT_PLATFORM`, picks one; `serial` names an adb device, `simulator` a simulator by name or UDID.
 - **Shared apps.** An app marked `shared` runs once, from the main checkout, for every lane (a database, a backend whose port is fixed).
 
 ## kitt.toml
@@ -102,6 +105,8 @@ link = ["apps/mobile/.env", "apps/mobile/.env.supabase.local"]
 
 [emulator]
 reverse = [54321]            # ports besides the apps' own the device must reach
+# platform = "ios"           # android | ios | auto (default); KITT_PLATFORM overrides
+# simulator = "iPhone 17"    # an iOS simulator by name or UDID; serial = an adb device
 
 [proof]
 guide = "docs/proof.md"      # or the text itself: test accounts, how to reach a screen
