@@ -1,5 +1,8 @@
 # kitt
 
+<img width="2172" height="724" alt="Kitt-Logo mit kobaltblauen Ts" src="https://github.com/user-attachments/assets/0bbde4f9-62bc-4e15-ac01-c3796f27b836" />
+
+
 Parallel work on a repo as **lanes**: one worktree per ticket, each with its own ports, its own agent in [herdr](https://herdr.dev), and a proof that the change works in the app.
 
 Three parts:
