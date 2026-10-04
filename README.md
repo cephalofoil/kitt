@@ -131,6 +131,10 @@ A key never runs git itself. It sends Claude a few words, with the how-to attach
 | behind the default branch | `b` | Claude calls `rebase_and_push`; on conflicts it rebases by hand and asks where a conflict is not clear |
 | the PR is merged | `m` | switches to the default branch, brought up to date (done by the mod; Claude is told) |
 
+**Merging is yours.** No key and no tool merges. When Claude runs `gh pr merge` anyway, the call is held and you are asked; anything but "Merge" refuses it.
+
+**Auto-rebase** is an option of the plugin, off by default (`/plugin`, pr-watch, configure). On, a branch with an open PR that falls behind is rebased and pushed without a key press, as long as the tree is clean and the rebase has no conflicts.
+
 The tools, as Claude sees them:
 
 - `mcp__pr-watch__commit` `{ subject, body?, paths? }`: stages and commits. Refuses on the default branch. Never pushes.

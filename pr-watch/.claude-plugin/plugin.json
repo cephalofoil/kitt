@@ -1,9 +1,17 @@
 {
   "name": "pr-watch",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Above the prompt: the branch PR with its checks and failing log lines, uncommitted work with a commit-and-push key, and how far the branch is behind the default branch with a rebase key. The branch name sits in the hint line.",
   "types": "./types/index.d.ts",
   "author": {
     "name": "cephalofoil"
+  },
+  "userConfig": {
+    "autoRebase": {
+      "type": "boolean",
+      "title": "Auto-rebase",
+      "description": "Rebase and push a branch with an open PR by itself when it falls behind and the rebase is clean",
+      "default": false
+    }
   }
 }

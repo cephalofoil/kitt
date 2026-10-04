@@ -42,7 +42,7 @@ const HOW = {
     `repo has a kitt.toml, otherwise the checks AGENTS.md or CLAUDE.md name. If a check fails, stop and report it. If the branch is ` +
     `behind the default branch, call ${TOOL.rebase} first. Then call ${TOOL.push}, and open a PR against the default branch with ` +
     `\`gh pr create\`, following the repo's PR conventions: title style, the sections its instructions ask for, the issue it closes. ` +
-    `If \`kitt proof status\` shows a proof for this lane, say in the PR body what it shows. Answer with the PR link and one line on the checks.`,
+    `If \`kitt proof status\` shows a proof for this lane, say in the PR body what it shows. Do not merge the PR: merging is the person's decision. Answer with the PR link and one line on the checks.`,
   push:
     `Sent by the Push key of the pr-watch band. Call the tool ${TOOL.push}. If it answers that the remote holds other commits, ` +
     `read them: call again with force_with_lease only when they are this branch's own commits from before a rebase; if they are ` +
@@ -78,6 +78,16 @@ const HEAD = {
   merged: { color: 'magenta', mark: '✓', word: 'merged' },
   closed: { color: 'gray', mark: '–', word: 'closed' },
 } as const
+
+// A command that merges a pull request: the CLI's own, or the API's merge endpoint.
+const MERGE = /\bgh\s+pr\s+merge\b|\bgh\s+api\b[^\n]*\/pulls\/\d+\/merge\b/
+const NO_MERGE =
+  'Merging a pull request is the person\'s decision, and they did not approve this one. Do not merge and do not try another way: ' +
+  'say that the PR is ready to merge, and stop.'
+
+// Set from the plugin's options: rebase a PR's branch by itself when it falls behind.
+let isAutoRebase = false
+let autoFor = ''
 
 let isPrBusy = false
 let isGitBusy = false
@@ -178,6 +188,17 @@ async function refreshGit($: EngineInterface) {
     const now = await loadGit($)
 
     await update($, gitState, () => now)
+
+    if (isAutoRebase && now !== null && now.behind > 0 && now.modified + now.untracked === 0 && now.conflicts?.length === 0) {
+      const pr = await read($, snapshot)
+      const key = `${now.head}:${now.baseSha}`
+
+      if (pr !== null && pr.state === 'OPEN' && pr.branch === now.branch && autoFor !== key) {
+        autoFor = key
+        $.ui.toast(`${now.behind} behind ${now.base.replace(/^origin\//, '')}: rebasing (auto-rebase is on)`, { timeoutMs: 8000 })
+        void $.prompt.submit({ text: `${ASK.rebase}${now.base}.` })
+      }
+    }
   } catch (error) {
     $.ui.log(`pr-watch: ${error instanceof Error ? error.message : String(error)}`)
   } finally {
@@ -518,7 +539,9 @@ async function switchToBase($: EngineInterface, git: PrWatchGit) {
   await refreshPr($)
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  isAutoRebase = options.autoRebase === true
+
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'pr-watch',
@@ -632,6 +655,23 @@ export const register: Register = on => {
 
     return next({ ...e, props: { ...e.props, tail } })
   })
+
+  // Merging is held until the person says yes, whoever asked for it and however green the PR is.
+  on('tool.call', { tool: ['Bash', 'PowerShell'] }, async ($, e, next) => {
+    const command = String((e as { command?: unknown }).command ?? '')
+
+    if (!MERGE.test(command)) return next(e)
+
+    let answer = 'Do not merge'
+
+    try {
+      answer = await $.ui.ask(`Claude is about to merge a pull request. Merge it? ${command.slice(0, 140)}`, ['Merge', 'Do not merge'])
+    } catch {
+      // Dismissed, or nobody to ask: the answer stays no.
+    }
+
+    return answer === 'Merge' ? next(e) : { deny: NO_MERGE }
+  }).catch(() => ({ deny: NO_MERGE }))
 
   on('tool.call', { tool: 'mcp__pr-watch__commit' }, ($, e) => commitTool($, e as { subject?: unknown; body?: unknown; paths?: unknown }))
   on('tool.call', { tool: 'mcp__pr-watch__push' }, ($, e) => pushTool($, e as { force_with_lease?: unknown }))
