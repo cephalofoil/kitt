@@ -40,6 +40,7 @@ const usage = `kitt — lanes for parallel work
         [--home] [--yes]           write into kitt's folder, not the repo · take everything without asking
   kitt detect [path]             print what kitt detects in a repo; registers and writes nothing
   kitt doctor                    what kitt needs and whether it is there
+  kitt logo                      the dashboard's logo in its variants (KITT_LOGO picks one)
 
 A lane is named by its name, <repo>/<name>, its issue number, or nothing at all
 inside its directory.
@@ -53,7 +54,7 @@ func main() {
 	commands := map[string]func([]string) error{
 		"dash": cmdDash, "new": cmdNew, "ls": cmdLs, "list": cmdLs, "focus": cmdFocus, "up": cmdUp, "down": cmdDown,
 		"emu": cmdEmu, "env": cmdEnv, "check": cmdCheck, "proof": cmdProof, "adopt": cmdAdopt, "link": cmdLink,
-		"rm": cmdRm, "agent": cmdAgent, "setup": cmdSetup, "pr": cmdPr, "open": cmdOpen, "detect": cmdDetect, "repo": cmdRepo, "init": cmdInit, "doctor": cmdDoctor,
+		"rm": cmdRm, "agent": cmdAgent, "logo": cmdLogo, "setup": cmdSetup, "pr": cmdPr, "open": cmdOpen, "detect": cmdDetect, "repo": cmdRepo, "init": cmdInit, "doctor": cmdDoctor,
 	}
 	command, ok := commands[os.Args[1]]
 	if !ok {
