@@ -6,13 +6,16 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 )
 
 const usage = `kitt — lanes for parallel work
 
   kitt dash [--workspace]        the dashboard (--workspace opens it as a herdr workspace)
-  kitt new <issue|name>          a new lane: worktree, branch, linked env files, setup
+  kitt new <issue|ticket|name>   a new lane: worktree, branch, linked env files, setup
         [--prompt t] [--no-agent]  an issue lane starts an agent on the issue; --prompt gives any lane one
+        [--prompt-env VAR]         the prompt from an environment variable (Linear's LINEAR_PROMPT)
+        [--branch b] [--dir d]     the branch to use instead of branch_prefix + name · the repo by a directory
         [--apps web,admin]         the apps the lane is about, when not the repo's usual ones
         [--repo r] [--base ref] [--focus] [--no-setup]
   kitt pr <number>               check an open pull request out as a lane, to look at it before the merge
@@ -42,7 +45,11 @@ const usage = `kitt — lanes for parallel work
   kitt doctor                    what kitt needs and whether it is there
   kitt logo                      the dashboard's logo in its variants (KITT_LOGO picks one)
 
-A lane is named by its name, <repo>/<name>, its issue number, or nothing at all
+The emulator is an Android emulator through adb or, on a Mac, a booted iOS simulator;
+kitt picks the one running (Android first). KITT_PLATFORM=android|ios, or platform in
+kitt.toml's [emulator], chooses.
+
+A lane is named by its name, <repo>/<name>, its issue number or ticket, or nothing at all
 inside its directory.
 `
 
@@ -80,10 +87,25 @@ func cmdDoctor([]string) error {
 		fmt.Printf("%s %-9s %s\n", mark, name, detail)
 	}
 	for _, tool := range []struct{ name, why string }{
-		{"git", "worktrees"}, {"gh", "issues and pull requests"}, {"herdr", "workspaces and agents"}, {"adb", "the emulator"},
+		{"git", "worktrees"}, {"gh", "issues and pull requests"}, {"herdr", "workspaces and agents"},
 	} {
 		path, err := exec.LookPath(tool.name)
 		line(err == nil, tool.name, tool.why+"  "+path)
+	}
+	// The phone app runs on an Android emulator through adb or, on a Mac, an iOS
+	// simulator through simctl; one of them is enough.
+	adb, adbErr := exec.LookPath("adb")
+	if runtime.GOOS == "darwin" {
+		xcrun, simErr := exec.LookPath("xcrun")
+		line(adbErr == nil || simErr == nil, "adb", "Android emulator  "+orText(adb, "not installed (optional with the iOS simulator)"))
+		line(simErr == nil, "simctl", "iOS simulator  "+orText(xcrun, "install Xcode"))
+	} else {
+		line(adbErr == nil, "adb", "the emulator  "+adb)
+	}
+	if dev, err := pickDevice(RepoConfig{}); err == nil {
+		line(true, "device", dev.String()+"  (KITT_PLATFORM=android|ios to choose)")
+	} else {
+		line(false, "device", err.Error())
 	}
 	line(hasHerdr(), "herdr up", "the herdr server answers")
 
@@ -99,4 +121,11 @@ func cmdDoctor([]string) error {
 	repos := loadGlobal().Repos
 	line(len(repos) > 0, "repos", fmt.Sprintf("%d registered  (%s)", len(repos), configDir()))
 	return nil
+}
+
+func orText(value, otherwise string) string {
+	if value == "" {
+		return otherwise
+	}
+	return value
 }

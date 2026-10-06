@@ -378,8 +378,14 @@ func renderConfig(cfg RepoConfig) string {
 	}
 	b.WriteString("]\n")
 
-	if len(cfg.Emulator.Reverse) > 0 || cfg.Emulator.Serial != "" {
+	if len(cfg.Emulator.Reverse) > 0 || cfg.Emulator.Serial != "" || cfg.Emulator.Platform != "" || cfg.Emulator.Simulator != "" {
 		b.WriteString("\n[emulator]\n")
+		if cfg.Emulator.Platform != "" {
+			fmt.Fprintf(&b, "platform = %s\n", tomlString(cfg.Emulator.Platform))
+		}
+		if cfg.Emulator.Simulator != "" {
+			fmt.Fprintf(&b, "simulator = %s\n", tomlString(cfg.Emulator.Simulator))
+		}
 		if cfg.Emulator.Serial != "" {
 			fmt.Fprintf(&b, "serial = %s\n", tomlString(cfg.Emulator.Serial))
 		}

@@ -10,28 +10,11 @@ import (
 	"time"
 )
 
-// One emulator is the runtime for every lane: its dev client loads the bundle
-// of whichever lane's Metro it is pointed at.
-
-func adbDevice(cfg RepoConfig) (string, error) {
-	if cfg.Emulator.Serial != "" {
-		return cfg.Emulator.Serial, nil
-	}
-	out, err := run("", "adb", "devices")
-	if err != nil {
-		return "", fail("adb is not available")
-	}
-	for _, line := range strings.Split(out, "\n")[1:] {
-		fields := strings.Fields(line)
-		if len(fields) == 2 && fields[1] == "device" {
-			return fields[0], nil
-		}
-	}
-	return "", fail("no emulator or device is attached")
-}
+// One emulator (or simulator) is the runtime for every lane: its dev client
+// loads the bundle of whichever lane's Metro it is pointed at.
 
 // pointEmulator loads a lane's bundle into the dev client: the lane's ports are
-// reversed into the device, then the client is sent to the lane's Metro.
+// made to reach the device, then the client is sent to the lane's Metro.
 func pointEmulator(lane Lane) (string, error) {
 	cfg := loadRepoConfig(lane.Main, lane.Path)
 	app := cfg.expo()
@@ -53,7 +36,7 @@ func pointEmulator(lane Lane) (string, error) {
 	if app.Scheme == "" {
 		return "", fail("no deep-link scheme known for %s: set `scheme` on the app in kitt.toml", app.Name)
 	}
-	serial, err := adbDevice(cfg)
+	dev, err := pickDevice(cfg)
 	if err != nil {
 		return "", err
 	}
@@ -64,24 +47,19 @@ func pointEmulator(lane Lane) (string, error) {
 			ports = append(ports, p)
 		}
 	}
-	for _, p := range ports {
-		spec := "tcp:" + strconv.Itoa(p)
-		if _, err := run("", "adb", "-s", serial, "reverse", spec, spec); err != nil {
-			return "", err
-		}
+	if err := dev.reach(ports); err != nil {
+		return "", err
 	}
 
 	link := app.Scheme + "://expo-development-client/?url=" + url.QueryEscape("http://localhost:"+strconv.Itoa(port))
-	start := []string{"-s", serial, "shell", "am", "start", "-W", "-a", "android.intent.action.VIEW", "-d", "'" + link + "'"}
-	if app.Package != "" {
-		start = append(start, app.Package)
-	}
-	if out, err := runTimeout("", 30*time.Second, "adb", start...); err != nil || strings.Contains(out, "Error:") {
-		return "", fail("the dev client did not open %s: %s", link, firstLine(out+" "+fmt.Sprint(err)))
+	if err := dev.open(link, app.Package); err != nil {
+		return "", err
 	}
 
-	_ = updateState(func(s *State) { s.Emulator = &EmuState{Lane: lane.key(), Port: port, At: time.Now()} })
-	return fmt.Sprintf("emulator → %s (Metro %d)", lane.Name, port), nil
+	_ = updateState(func(s *State) {
+		s.Emulator = &EmuState{Lane: lane.key(), Port: port, Device: dev.String(), At: time.Now()}
+	})
+	return fmt.Sprintf("%s → %s (Metro %d)", dev, lane.Name, port), nil
 }
 
 func cmdEmu(args []string) error {
