@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -123,7 +124,8 @@ func findLane(arg string) (Lane, error) {
 
 	var matches []Lane
 	for _, lane := range lanes {
-		if arg == lane.Name || arg == lane.Repo+"/"+lane.Name || arg == lane.Branch || norm(arg) == lane.key() || (lane.IsMain && arg == "main") {
+		ticket := lane.State != nil && lane.State.Ticket != "" && strings.EqualFold(arg, lane.State.Ticket)
+		if arg == lane.Name || arg == lane.Repo+"/"+lane.Name || arg == lane.Branch || norm(arg) == lane.key() || (lane.IsMain && arg == "main") || ticket {
 			matches = append(matches, lane)
 		}
 	}
@@ -175,6 +177,27 @@ func findRepo(name string) (RepoRef, error) {
 		return RepoRef{}, fail("no repos registered: run `kitt repo add` inside a repo")
 	}
 	return RepoRef{}, fail("several repos are registered: pass --repo <name>")
+}
+
+// repoAt resolves a directory to the registered repo it lies in, or that lies
+// in it (a tracker's working directory may be the folder above the checkout).
+func repoAt(dir string) (RepoRef, error) {
+	var found []RepoRef
+	for _, repo := range loadGlobal().Repos {
+		if within(dir, repo.Path) {
+			return repo, nil
+		}
+		if within(repo.Path, dir) {
+			found = append(found, repo)
+		}
+	}
+	if len(found) == 1 {
+		return found[0], nil
+	}
+	if len(found) > 1 {
+		return RepoRef{}, fail("several registered repos lie in %s: pass --repo <name>", dir)
+	}
+	return RepoRef{}, fail("%s is in no registered repo: run `kitt repo add` there", dir)
 }
 
 var bases = map[string]string{}
@@ -304,20 +327,60 @@ func cmdNew(args []string) error {
 		apps = strings.Split(opts["apps"], ",")
 	}
 	if len(rest) == 0 {
-		return fail("usage: kitt new <issue number | name> [--repo r] [--base ref] [--apps web,admin] [--agent | --no-agent] [--prompt text] [--focus]")
+		return fail("usage: kitt new <issue number | ticket | name> [--repo r | --dir d] [--base ref] [--branch b] [--apps web,admin] [--agent | --no-agent] [--prompt text | --prompt-env VAR] [--focus]")
 	}
 	repo, err := findRepo(opts["repo"])
+	if opts["dir"] != "" && opts["repo"] == "" {
+		repo, err = repoAt(opts["dir"])
+	}
 	if err != nil {
 		return err
 	}
 	cfg := loadRepoConfig(repo.Path, "")
+
+	prompt := opts["prompt"]
+	if opts["prompt-env"] != "" {
+		prompt = os.Getenv(opts["prompt-env"])
+	}
+	// A branch given from outside (Linear's name for the ticket) replaces branch_prefix + name.
+	branch := opts["branch"]
+	if branch != "" {
+		if _, err := run(repo.Path, "git", "check-ref-format", "--branch", branch); err != nil {
+			return fail("%q is not a usable branch name", branch)
+		}
+		// A branch that already has a lane is that lane: opening the ticket again goes back to it.
+		for _, lane := range lanesOf(repo, loadState()) {
+			if lane.Branch != branch {
+				continue
+			}
+			if !lane.Managed {
+				return fail("%s is checked out at %s, which is not a lane yet: kitt adopt %s", branch, lane.Path, lane.Path)
+			}
+			fmt.Printf("%s is the lane %s\n", branch, lane.Name)
+			// An agent already at work on it is not handed the ticket a second time.
+			busy := false
+			for _, agent := range herdrAgents() {
+				busy = busy || within(agent.Cwd, lane.Path)
+			}
+			if !busy && (prompt != "" || opts["agent"] != "") && hasHerdr() {
+				if err := startAgent(lane, cfg, prompt); err != nil {
+					return err
+				}
+			}
+			if opts["focus"] != "" && hasHerdr() {
+				_, err := herdrOpen(lane, true)
+				return err
+			}
+			return nil
+		}
+	}
 
 	for _, name := range apps {
 		if cfg.app(name) == nil {
 			return fail("%s has no app named %q", repo.Name, name)
 		}
 	}
-	entry := LaneState{Repo: repo.Name, Created: time.Now(), Apps: apps}
+	entry := LaneState{Repo: repo.Name, Created: time.Now(), Apps: apps, Prompt: prompt}
 	name := slug(strings.Join(rest, " "), 40)
 	if isNumber(rest[0]) {
 		var issue struct {
@@ -332,6 +395,17 @@ func cmdNew(args []string) error {
 		entry.Issue, _ = strconv.Atoi(rest[0])
 		entry.Title, entry.URL = issue.Title, issue.URL
 		name = rest[0] + "-" + slug(issue.Title, 32)
+	} else if ticketID.MatchString(rest[0]) {
+		entry.Ticket = rest[0]
+	}
+	if branch != "" {
+		// The branch says more than a ticket id: tjark/eng-123-fix-login is the lane eng-123-fix-login.
+		if fromBranch := slug(branch[strings.LastIndex(branch, "/")+1:], 40); fromBranch != "" && !isNumber(rest[0]) {
+			name = fromBranch
+		}
+		entry.Branch = branch
+	} else {
+		branch = cfg.BranchPrefix + name
 	}
 	if name == "" {
 		return fail("that gives no usable lane name")
@@ -339,7 +413,6 @@ func cmdNew(args []string) error {
 	entry.Name = name
 
 	path := filepath.Join(cfg.lanesDir(repo.Path), name)
-	branch := cfg.BranchPrefix + name
 	if exists(path) {
 		return fail("%s exists already", path)
 	}
@@ -355,13 +428,18 @@ func cmdNew(args []string) error {
 		return err
 	}
 
-	workspace := ""
-	if hasHerdr() {
-		var result struct {
-			Workspace struct {
-				ID string `json:"workspace_id"`
-			} `json:"workspace"`
+	// A given branch may exist already, here or on origin (work on the ticket begun
+	// elsewhere): then the lane checks it out instead of starting it anew.
+	existing := ""
+	if entry.Branch != "" {
+		if _, err := run(repo.Path, "git", "rev-parse", "--verify", "--quiet", "refs/heads/"+branch); err == nil {
+			existing = branch
+		} else if _, err := runTimeout(repo.Path, 60*time.Second, "git", "fetch", "--quiet", "origin", branch+":refs/remotes/origin/"+branch); err == nil {
+			existing = "origin/" + branch
 		}
+	}
+
+	if existing == "" && hasHerdr() {
 		args := []string{"worktree", "create", "--cwd", repo.Path, "--branch", branch, "--base", base,
 			"--path", filepath.ToSlash(path), "--label", name}
 		if opts["focus"] != "" {
@@ -369,19 +447,26 @@ func cmdNew(args []string) error {
 		} else {
 			args = append(args, "--no-focus")
 		}
-		if err := herdrTimeout(&result, 60*time.Second, args...); err != nil {
+		if err := herdrTimeout(nil, 60*time.Second, args...); err != nil {
 			fmt.Printf("  herdr could not create it (%v): using git\n", err)
-		} else {
-			workspace = result.Workspace.ID
 		}
 	}
 	if !exists(path) {
-		if _, err := runTimeout(repo.Path, 60*time.Second, "git", "worktree", "add", "-b", branch, path, base); err != nil {
+		gitArgs := []string{"worktree", "add", "-b", branch, path, base}
+		switch {
+		case existing == branch:
+			gitArgs = []string{"worktree", "add", path, branch}
+		case existing != "":
+			gitArgs = []string{"worktree", "add", "--track", "-b", branch, path, existing}
+		}
+		if _, err := runTimeout(repo.Path, 90*time.Second, "git", gitArgs...); err != nil {
 			return err
 		}
 	}
-	// A lane starts from origin's base but must not push to it by accident.
-	_, _ = run(path, "git", "branch", "--unset-upstream")
+	if existing == "" {
+		// A lane starts from origin's base but must not push to it by accident.
+		_, _ = run(path, "git", "branch", "--unset-upstream")
+	}
 
 	entry.Path = path
 	if err := updateState(func(s *State) {
@@ -404,15 +489,24 @@ func cmdNew(args []string) error {
 	}
 
 	// A lane made for an issue is made to be worked on: the agent starts unless told not to.
-	wantsAgent := opts["agent"] != "" || opts["prompt"] != "" || (entry.Issue > 0 && opts["no-agent"] == "")
-	if !wantsAgent {
-		return nil
+	wantsAgent := opts["agent"] != "" || prompt != "" || (entry.Issue > 0 && opts["no-agent"] == "")
+	if wantsAgent {
+		if !hasHerdr() {
+			return fail("an agent needs herdr: start one in %s yourself", path)
+		}
+		if err := startAgent(lane, cfg, prompt); err != nil {
+			return err
+		}
 	}
-	if workspace == "" {
-		return fail("an agent needs herdr: start one in %s yourself", path)
+	if opts["focus"] != "" && hasHerdr() {
+		_, err := herdrOpen(lane, true)
+		return err
 	}
-	return startAgent(lane, cfg, opts["prompt"])
+	return nil
 }
+
+// ticketID is a tracker's identifier for an issue, as Linear writes it: ENG-123.
+var ticketID = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*-[0-9]+$`)
 
 const issuePrompt = "Work on issue #{issue}: {title}. Read it first with `gh issue view {issue} --comments`. " +
 	"This checkout is a kitt lane: run `kitt env` for its ports, `kitt check` before you report, " +
@@ -458,6 +552,9 @@ func startAgent(lane Lane, cfg RepoConfig, prompt string) error {
 		target = pane
 	}
 
+	if prompt == "" && lane.State != nil && lane.State.Prompt != "" {
+		prompt = lane.State.Prompt
+	}
 	if prompt == "" && lane.State != nil && lane.State.Issue > 0 {
 		prompt = cfg.Agent.Prompt
 		if prompt == "" {
@@ -873,7 +970,11 @@ func removeLeftover(name string) string {
 		}
 		_, _ = run(repo.Path, "git", "worktree", "prune")
 		_ = updateState(func(s *State) { delete(s.Lanes, key) })
-		if _, err := run(repo.Path, "git", "branch", "-d", cfg.BranchPrefix+entry.Name); err != nil {
+		branch := entry.Branch
+		if branch == "" {
+			branch = cfg.BranchPrefix + entry.Name
+		}
+		if _, err := run(repo.Path, "git", "branch", "-d", branch); err != nil {
 			return fmt.Sprintf("removed what was left of %s; its branch is kept", entry.Name)
 		}
 		return fmt.Sprintf("removed what was left of %s and its branch", entry.Name)

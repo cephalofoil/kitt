@@ -12,8 +12,10 @@ import (
 const usage = `kitt — lanes for parallel work
 
   kitt dash [--workspace]        the dashboard (--workspace opens it as a herdr workspace)
-  kitt new <issue|name>          a new lane: worktree, branch, linked env files, setup
+  kitt new <issue|ticket|name>   a new lane: worktree, branch, linked env files, setup
         [--prompt t] [--no-agent]  an issue lane starts an agent on the issue; --prompt gives any lane one
+        [--prompt-env VAR]         the prompt from an environment variable (Linear's LINEAR_PROMPT)
+        [--branch b] [--dir d]     the branch to use instead of branch_prefix + name · the repo by a directory
         [--apps web,admin]         the apps the lane is about, when not the repo's usual ones
         [--repo r] [--base ref] [--focus] [--no-setup]
   kitt pr <number>               check an open pull request out as a lane, to look at it before the merge
@@ -47,7 +49,7 @@ The emulator is an Android emulator through adb or, on a Mac, a booted iOS simul
 kitt picks the one running (Android first). KITT_PLATFORM=android|ios, or platform in
 kitt.toml's [emulator], chooses.
 
-A lane is named by its name, <repo>/<name>, its issue number, or nothing at all
+A lane is named by its name, <repo>/<name>, its issue number or ticket, or nothing at all
 inside its directory.
 `
 

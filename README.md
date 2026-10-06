@@ -14,7 +14,7 @@ Three parts:
 ## Install
 
 ```
-go build -o ~/.local/bin/kitt.exe ./cmd/kitt     # any directory on PATH
+go build -o ~/.local/bin/kitt ./cmd/kitt     # any directory on PATH; on Windows see below
 
 /plugin marketplace add cephalofoil/kitt
 /plugin install pr-watch@kitt
@@ -22,6 +22,27 @@ go build -o ~/.local/bin/kitt.exe ./cmd/kitt     # any directory on PATH
 ```
 
 `kitt doctor` says what is missing (git, gh, herdr, adb or the iOS simulator, symlinks) and which device kitt would use.
+
+### On Windows
+
+In PowerShell, from the repo root (`~` is not expanded for `go build`, so use `$HOME`):
+
+```powershell
+New-Item -ItemType Directory -Force "$HOME\.local\bin" | Out-Null
+go build -o "$HOME\.local\bin\kitt.exe" ./cmd/kitt
+```
+
+Once, put that folder on your user PATH, then open a new terminal:
+
+```powershell
+$bin  = "$HOME\.local\bin"
+$path = [Environment]::GetEnvironmentVariable("Path", "User")
+if (($path -split ';') -notcontains $bin) {
+  [Environment]::SetEnvironmentVariable("Path", "$path;$bin", "User")
+}
+```
+
+To update, run the `go build` line again. `kitt doctor` checks symlinks: turn on Developer Mode (Settings → System → For developers) so env files are symlinked into lanes; without it kitt falls back to hard links.
 
 ## A day with it
 
@@ -72,6 +93,30 @@ The dashboard opens with the kitt wordmark and, beside it, three facts: how many
 | `text` | no logo |
 
 The tube is drawn with Unicode sextants (U+1FB00 and up). A font without them shows boxes there; the wordmark uses only block elements and draws everywhere.
+
+## From Linear
+
+Linear's **Work on issue → Custom script** hands an issue to kitt: a lane on Linear's branch name, an agent started on Linear's prompt, the lane's workspace shown in herdr. Opened a second time, the issue goes back to its lane; a branch that exists only on origin is checked out, not started anew.
+
+```
+ln -s "$PWD/linear/kitt-linear" ~/.local/bin/kitt-linear
+```
+
+Turn on **Custom script** in Linear (Settings → Code & reviews → Configure coding tools), then `~/.linear/coding-tools.json`:
+
+```json
+{
+  "openIssue": {
+    "path": "/Users/<you>/.local/bin/kitt-linear",
+    "args": ["{{issue.identifier}}", "--branch", "{{issue.branchName}}", "--dir", "{{workDir}}"],
+    "env": ["LINEAR_PROMPT"]
+  }
+}
+```
+
+The prompt comes through the environment, not the arguments, so no text of it is read as a flag. `--dir` picks the registered repo the working directory lies in. Linear runs the script outside any shell and does not wait: it sets its own PATH, works in the background into `~/Library/Logs/kitt-linear.log`, starts herdr in Terminal when no herdr server runs (`KITT_TERMINAL=iTerm` for iTerm), and reports a failure as a notification.
+
+The same from the shell: `kitt new ENG-123 --branch tjark/eng-123-fix-login --prompt "…"`. A lane is then also named by its ticket: `kitt focus ENG-123`.
 
 ## How lanes stay apart
 
