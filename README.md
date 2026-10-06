@@ -172,9 +172,15 @@ env_files = [".env.supabase.local"]
 setup = ["bun install --frozen-lockfile"]
 checks = ["bun run typecheck", "bun run lint", "bun run test"]
 
+env_out = ".env.development.local"   # gitignored: kitt writes [app.env] into it on every start
+
 [app.env]
 EXPO_PUBLIC_API_URL = "http://localhost:{port:api}"
 ```
+
+`[app.env]` reaches the dev server as its environment. Some bundlers read env files into the client bundle and let them win over that environment: Expo merges `.env`, `.env.local`, `.env.development.local` over `process.env`, so a linked `.env.local` from the main checkout sends every lane's app to the main checkout's api. `env_out` names a file in the app's directory that `kitt up` writes the lane's `[app.env]` and `port_env` values into, sorted, mode 0600, before it starts the app; env files' values are never copied into it. Pick one the bundler reads last and the repo ignores; kitt warns when git would commit it and refuses a symlink (a linked file is the main checkout's).
+
+kitt remembers what it started each app with. When the command, the environment or `env_out` changes, the next `kitt up` or `kitt focus` restarts that app instead of leaving the old one running.
 
 `{port}`, `{port:<app>}`, `{lane}`, `{slot}`, `{root}` and `{main}` are filled per lane. `lazy = true` defers an app's setup and start until it is named; `shared = true` runs it once for all lanes.
 

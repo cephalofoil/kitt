@@ -317,6 +317,7 @@ What to settle, per app:
 - env_files: env files in the app's directory that select the LOCAL environment and must be loaded for dev, if the repo has that convention.
 - [app.env]: variables that tell this app where another app of the same lane listens, written with {port:<app name>}.
 - port_env: a variable the app reads its port from, if any.
+- env_out: for an app whose bundler inlines env files into the client and lets them win over the process environment (Expo's EXPO_PUBLIC_*), a gitignored, not-linked file in the app's directory that kitt writes [app.env] and port_env into on every start, e.g. ".env.development.local". Only when the repo's .gitignore covers it.
 - stop: a command that ends what dev started, when a container outlives its terminal.
 - lazy = true for apps that are not needed for most tickets.
 Also: drop detected apps that are not runnable apps, add apps detection missed (a database, a worker), and never give two apps the same base port.
@@ -436,6 +437,9 @@ func renderConfig(cfg RepoConfig) string {
 		if len(app.EnvFiles) > 0 {
 			fmt.Fprintf(&b, "env_files = %s\n", quote(app.EnvFiles))
 		}
+		if app.EnvOut != "" {
+			fmt.Fprintf(&b, "env_out = %s\n", tomlString(app.EnvOut))
+		}
 		if len(app.Setup) > 0 {
 			fmt.Fprintf(&b, "setup = %s\n", quote(app.Setup))
 		}
@@ -462,7 +466,9 @@ func renderConfig(cfg RepoConfig) string {
 	b.WriteString(`
 # Placeholders in dev, stop, setup, checks and env values:
 #   {port} this app's port in the lane · {port:<app>} another app's · {lane} · {slot} · {root} the lane · {main} the main checkout
-# Keys an app can have: port_env, shared, lazy, dev, stop, env_files, setup, checks, and [app.env].
+# Keys an app can have: port_env, shared, lazy, dev, stop, env_files, env_out, setup, checks, and [app.env].
+# env_out = ".env.development.local" writes [app.env] and port_env into that (gitignored) file on every up,
+# for bundlers that inline env files over the process env (Expo).
 # [stack] mode = "single" runs one lane's servers at a time (keep = ["db"] never stops those apps).
 `)
 
