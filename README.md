@@ -122,11 +122,12 @@ The same from the shell: `kitt new ENG-123 --branch tjark/eng-123-fix-login --pr
 
 - **Ports.** Each lane holds a slot; an app listens on its base port plus ten per slot (Metro 8081 in the main checkout, 8091 in the first lane). `kitt env` prints a lane's ports.
 - **Env files.** The gitignored files named under `link` are symlinks into the main checkout, so every lane sees the same secrets and an edit reaches all of them.
-- **The emulator.** One device, one installed dev client. `kitt emu` makes the lane's ports reach it and sends the client to the lane's Metro; no native build. A proof holds a lock, so two agents never load over each other.
+- **The emulator.** One device, one installed dev client. `kitt emu` makes the lane's ports reach it and sends the client to the lane's Metro; no native build. A proof holds a lock, so two agents never load over each other; `kitt who` says who has it.
   - Android (any OS): an emulator or phone through `adb`; the ports are `adb reverse`d.
   - iOS (Mac only): a booted simulator through `xcrun simctl`; it shares the Mac's network, so nothing is reversed. Screenshots come from `simctl io screenshot`.
   - kitt uses whichever is running, an attached Android device first. `platform = "ios"` (or `"android"`) under `[emulator]`, or `KITT_PLATFORM`, picks one; `serial` names an adb device, `simulator` a simulator by name or UDID.
 - **Shared apps.** An app marked `shared` runs once, from the main checkout, for every lane (a database, a backend whose port is fixed).
+- **One stack at a time.** Where a machine cannot run every lane's servers at once, `[stack] mode = "single"` keeps one lane's stack up. See [Single stack](#single-stack).
 
 ## kitt.toml
 
@@ -156,6 +157,11 @@ reverse = [54321]            # ports besides the apps' own the device must reach
 [proof]
 guide = "docs/proof.md"      # or the text itself: test accounts, how to reach a screen
 
+# [stack]
+# mode = "single"            # one lane's servers at a time (default "parallel")
+# keep = ["db"]              # apps the single mode never stops, beside the shared ones
+# lease_ttl = "20m"          # how long a quiet holder keeps the stack
+
 [[app]]
 name = "mobile"
 kind = "expo"                # expo | web | backend
@@ -179,13 +185,29 @@ Until a repo has its own `kitt.toml` on its base branch, a copy at `<kitt home>/
 ## Proof
 
 ```
-kitt proof begin             # takes the emulator, loads the lane's app, prints the repo's guide
+kitt proof begin             # takes the emulator (and the stack, in single mode), loads the lane's app, prints the repo's guide
 kitt proof shot "one section, no header"
 kitt proof end --pass        # or --fail --note "..."
 kitt proof open              # the page: verdict, note, shots in order
 ```
 
 Proofs are kept under kitt's own folder (`%APPDATA%\kitt\proofs`), outside the repo. A proof goes stale when the lane gets a new commit.
+
+## Single stack
+
+With `[stack] mode = "single"` a repo runs one lane's servers at a time, and the emulator shows that lane. A lease, kept in kitt's folder, says which lane holds the stack, since when and why.
+
+- `kitt focus`, `kitt up` and `kitt emu` take a **soft** lease: the lane that had the stack is stopped (its dev tab closed, its stop lines run, anything still on its ports killed) and the new lane's servers start.
+- `kitt proof begin` and `kitt claim` take a **hard** lease, and the emulator with it. Another lane's `focus`, `up` or `claim` waits for it (`--wait 10m`) or fails naming the holder; `--force` takes it anyway, a person's call. `kitt proof end` and `kitt release` make it soft again; `kitt release --down` also stops the servers.
+- A hard lease lapses when the session that took it ends, or when it is not renewed for `lease_ttl` (each `kitt proof shot`, `claim` or `up` of the holder renews it).
+
+```
+kitt claim --wait 10m --reason "maestro login flow"   # an agent's test that is not a proof
+kitt who                                              # who holds each repo's stack and the emulator
+kitt release                                          # done: the stack stays up, another lane may take it
+```
+
+`kitt ls` shows the lease above the lanes, the dashboard marks the holder with ⚿. The single mode needs herdr: kitt starts servers only in herdr panes, and stops only what it can find.
 
 ## pr-watch
 

@@ -57,6 +57,7 @@ func cmdProof(args []string) error {
 		if label == "" {
 			return fail("usage: kitt proof shot <label>")
 		}
+		renewStack(lane)
 		dev, err := pickDevice(loadRepoConfig(lane.Main, lane.Path))
 		if err != nil {
 			return err
@@ -75,6 +76,7 @@ func cmdProof(args []string) error {
 		if len(rest) == 0 {
 			return fail("usage: kitt proof add <file> [label]")
 		}
+		renewStack(lane)
 		data, err := os.ReadFile(rest[0])
 		if err != nil {
 			return err
@@ -97,7 +99,11 @@ func cmdProof(args []string) error {
 		if opts["fail"] != "" {
 			verdict = "fail"
 		}
-		releaseEmulator(lane)
+		if notes, err := releaseStack(lane, false); err == nil {
+			for _, note := range notes {
+				fmt.Println(note)
+			}
+		}
 		head, _ := run(lane.Path, "git", "rev-parse", "HEAD")
 		tree := treeOf(lane.Path)
 		var done ProofState
@@ -154,17 +160,33 @@ func proofBegin(lane Lane, opts map[string]string) error {
 	cfg := loadRepoConfig(lane.Main, lane.Path)
 	useEmulator := lane.hasExpo(cfg) && opts["no-emulator"] == ""
 
-	if useEmulator {
-		wait := 10 * time.Minute
-		if value, err := time.ParseDuration(opts["wait"]); err == nil {
-			wait = value
+	wait := 10 * time.Minute
+	if value, err := time.ParseDuration(opts["wait"]); err == nil {
+		wait = value
+	}
+	// The single mode: the proof holds the stack (and the emulator) until it ends.
+	_, notes, err := acquireStack(lane, cfg, "hard", "proof", wait, false)
+	if err != nil {
+		return err
+	}
+	for _, note := range notes {
+		fmt.Println(note)
+	}
+	if cfg.Stack.single() && useEmulator {
+		for _, note := range startMetro(lane, cfg) {
+			fmt.Println(note)
 		}
-		if err := acquireEmulator(lane, wait); err != nil {
-			return err
+	}
+
+	if useEmulator {
+		if !cfg.Stack.single() {
+			if err := acquireEmulator(lane, wait); err != nil {
+				return err
+			}
 		}
 		message, err := pointEmulator(lane)
 		if err != nil {
-			releaseEmulator(lane)
+			_, _ = releaseStack(lane, false)
 			return err
 		}
 		fmt.Println(message)
@@ -193,6 +215,8 @@ func proofBegin(lane Lane, opts map[string]string) error {
 		if dev, err := pickDevice(cfg); err == nil {
 			fmt.Println("  " + dev.driveHint())
 		}
+	} else if cfg.Stack.single() {
+		fmt.Println("  the stack is yours until `kitt proof end`")
 	}
 	fmt.Println("  kitt proof shot <label>   after each step worth showing")
 	fmt.Println("  kitt proof end --pass     or --fail --note \"what is wrong\"")

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
@@ -34,6 +35,7 @@ type RepoConfig struct {
 	Agent        AgentCfg `toml:"agent"`
 	Emulator     EmuCfg   `toml:"emulator"`
 	Proof        ProofCfg `toml:"proof"`
+	Stack        StackCfg `toml:"stack"`
 	Apps         []App    `toml:"app"`
 
 	// Source says where the config came from: a kitt.toml path, or "detected".
@@ -53,6 +55,26 @@ type EmuCfg struct {
 	Serial    string `toml:"serial"`
 	Simulator string `toml:"simulator"`
 	Reverse   []int  `toml:"reverse"`
+}
+
+// StackCfg says how a repo's lanes share the machine. Mode "parallel" (the
+// default): every lane runs its own servers on its own ports. Mode "single":
+// one lane's stack runs at a time, and taking it stops the one before.
+type StackCfg struct {
+	Mode string `toml:"mode"`
+	// LeaseTTL is how long a held stack stays held without a word from its holder (default 20m).
+	LeaseTTL string `toml:"lease_ttl"`
+	// Keep names apps the single mode never stops, beside the shared ones (a database).
+	Keep []string `toml:"keep"`
+}
+
+func (s StackCfg) single() bool { return s.Mode == "single" }
+
+func (s StackCfg) ttl() time.Duration {
+	if d, err := time.ParseDuration(s.LeaseTTL); err == nil && d > 0 {
+		return d
+	}
+	return 20 * time.Minute
 }
 
 type ProofCfg struct {
