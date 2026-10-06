@@ -133,18 +133,28 @@ func focus(lane Lane, agentPane string, force bool) ([]string, error) {
 	return notes, nil
 }
 
-// startMetro starts a lane's dev servers when its Metro is not up, and waits for it.
+// startMetro starts what of a lane is not running, restarts what was started
+// with a config that has changed since, and waits for Metro.
 func startMetro(lane Lane, cfg RepoConfig) []string {
 	port := cfg.expo().port(lane.Slot)
-	if listening(port) {
-		return nil
-	}
+	wasUp := listening(port)
 	var notes []string
-	if _, err := up(lane, nil, false); err != nil {
+	lines, err := up(lane, nil, false)
+	if err != nil {
 		notes = append(notes, "dev servers: "+err.Error())
+	}
+	restarted := false
+	for _, line := range lines {
+		restarted = restarted || strings.HasSuffix(line, "restarting")
+	}
+	if wasUp && !restarted {
+		return notes
 	}
 	for waited := 0; waited < 90 && !listening(port); waited += 2 {
 		time.Sleep(2 * time.Second)
+	}
+	if restarted {
+		return append(notes, "restarted dev servers: their config changed")
 	}
 	return append(notes, "started dev servers")
 }

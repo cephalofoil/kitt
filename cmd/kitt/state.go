@@ -32,6 +32,16 @@ type LaneState struct {
 	Apps   []string     `json:"apps,omitempty"`
 	Checks *CheckResult `json:"checks,omitempty"`
 	Proof  *ProofState  `json:"proof,omitempty"`
+	// Dev is how each app's dev server was last started, by app name.
+	Dev map[string]DevStart `json:"dev,omitempty"`
+}
+
+// DevStart is what an app's dev server was started with: the pane it runs in
+// and a hash of its config, so a changed config restarts it.
+type DevStart struct {
+	Pane string    `json:"pane"`
+	Hash string    `json:"hash"`
+	At   time.Time `json:"at"`
 }
 
 type EmuState struct {

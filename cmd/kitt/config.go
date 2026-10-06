@@ -99,6 +99,10 @@ type App struct {
 	Checks   []string          `toml:"checks"`
 	Scheme   string            `toml:"scheme"`
 	Package  string            `toml:"package"`
+	// EnvOut is a file, in the app's dir, that `up` writes the lane's [app.env]
+	// and port_env values into: for bundlers that inline env files into the
+	// client bundle and let them win over the process environment (Expo).
+	EnvOut string `toml:"env_out"`
 }
 
 func configDir() string {
