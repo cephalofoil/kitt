@@ -74,7 +74,18 @@ func loadState() State {
 // updateState reads, changes and writes the state under a lock, so two kitt
 // processes (a dashboard and an agent's `kitt proof`) never lose each other's write.
 func updateState(change func(*State)) error {
-	lock := filepath.Join(configDir(), "state.lock")
+	return locked("state", func() error {
+		s := loadState()
+		change(&s)
+		return writeJSON(statePath(), s)
+	})
+}
+
+// locked runs fn while holding the named lock in kitt's folder: a directory,
+// made in one step, so of two processes exactly one gets it. A lock older than
+// ten seconds is left over from a crash and is taken.
+func locked(name string, fn func() error) error {
+	lock := filepath.Join(configDir(), name+".lock")
 	_ = os.MkdirAll(configDir(), 0o755)
 
 	deadline := time.Now().Add(3 * time.Second)
@@ -87,15 +98,12 @@ func updateState(change func(*State)) error {
 			continue
 		}
 		if time.Now().After(deadline) {
-			return fail("kitt state is locked by another process")
+			return fail("kitt %s is locked by another process", name)
 		}
 		time.Sleep(40 * time.Millisecond)
 	}
 	defer os.Remove(lock)
-
-	s := loadState()
-	change(&s)
-	return writeJSON(statePath(), s)
+	return fn()
 }
 
 // freeSlot is the lowest slot above 0 no lane of the repo holds; slot 0 is the

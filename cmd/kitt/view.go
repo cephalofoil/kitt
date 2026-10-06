@@ -41,6 +41,8 @@ type LaneView struct {
 	Up         []string
 	Down       []string
 	InEmulator bool
+	// Lease is the repo's stack lease when this lane holds it (the single mode).
+	Lease *Lease
 	// Touched are the apps the lane changed files of, against its base branch.
 	Touched []string
 	// Install is "" when the lane's apps are installed, else "installing" or "missing".
@@ -170,6 +172,8 @@ func views(withPRs bool) []LaneView {
 	for _, repo := range loadGlobal().Repos {
 		lanes := lanesOf(repo, state)
 		cfg := loadRepoConfig(repo.Path, "")
+		lease, leased := readLease(repo.Name)
+		leased = leased && cfg.Stack.single()
 		open := herdrWorkspaceOf(repo.Path)
 		var prs map[string]*PR
 		if withPRs {
@@ -233,6 +237,10 @@ func views(withPRs bool) []LaneView {
 				view.PR = prs[view.Branch]
 			}
 			view.InEmulator = state.Emulator != nil && state.Emulator.Lane == view.key()
+			if leased && lease.Lane == view.key() {
+				held := lease
+				view.Lease = &held
+			}
 			if len(missingSetup(view.Lane, cfg)) > 0 {
 				view.Install = "missing"
 				if installing == view.key() {
@@ -269,11 +277,12 @@ func cmdLs(args []string) error {
 			PR                              *PR
 			Checks                          *CheckResult
 			Proof                           *ProofState
+			Lease                           *Lease
 		}
 		var list []row
 		for _, v := range rows {
 			item := row{Repo: v.Repo, Name: v.Name, Path: v.Path, Branch: v.Branch, Agent: v.Agent, Slot: v.Slot,
-				Dirty: v.Dirty, Ahead: v.Ahead, Behind: v.Behind, Managed: v.Managed, InEmulator: v.InEmulator, PR: v.PR}
+				Dirty: v.Dirty, Ahead: v.Ahead, Behind: v.Behind, Managed: v.Managed, InEmulator: v.InEmulator, PR: v.PR, Lease: v.Lease}
 			if v.State != nil {
 				item.Checks, item.Proof = v.State.Checks, v.State.Proof
 			}
@@ -282,6 +291,12 @@ func cmdLs(args []string) error {
 		return json.NewEncoder(os.Stdout).Encode(list)
 	}
 
+	emu := currentEmulatorLock()
+	for _, stack := range stacks() {
+		if stack.Mode == "single" {
+			fmt.Println("stack " + whoLine(stack, emu))
+		}
+	}
 	unmanaged := 0
 	for _, v := range rows {
 		if !v.Managed && opts["all"] == "" {
@@ -315,6 +330,9 @@ func plainRow(v LaneView) string {
 	parts = append(parts, fmt.Sprintf("%-10s", proofText(v)))
 	if v.InEmulator {
 		parts = append(parts, "emulator")
+	}
+	if v.Lease != nil {
+		parts = append(parts, "stack:"+v.Lease.Kind)
 	}
 	return strings.TrimRight(strings.Join(parts, " "), " ")
 }

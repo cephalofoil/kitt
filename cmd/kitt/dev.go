@@ -100,6 +100,17 @@ func up(lane Lane, only []string, printOnly bool) ([]string, error) {
 	}
 
 	var lines []string
+	if cfg.Stack.single() && !printOnly {
+		// One lane's stack at a time: this lane takes it, the one before stops.
+		if err := needsHerdr(cfg); err != nil {
+			return nil, err
+		}
+		_, notes, err := acquireStack(lane, cfg, "soft", "up", 0, false)
+		if err != nil {
+			return nil, err
+		}
+		lines = append(lines, notes...)
+	}
 	workspace := ""
 	for _, app := range cfg.Apps {
 		if app.Dev == "" || !wanted(app) {
@@ -243,15 +254,28 @@ func cmdDown(args []string) error {
 	for _, line := range down(lane) {
 		fmt.Println(line)
 	}
+	dropLease(lane)
 	return nil
 }
 
 func down(lane Lane) []string {
 	cfg := loadRepoConfig(lane.Main, lane.Path)
+	var apps []App
+	for _, app := range cfg.Apps {
+		if !app.Shared {
+			apps = append(apps, app)
+		}
+	}
+	return stopApps(lane, cfg, apps, true)
+}
+
+// stopApps runs the stop line of each app and, with closeTabs, closes the
+// lane's dev tabs, which ends every server running in them.
+func stopApps(lane Lane, cfg RepoConfig, apps []App, closeTabs bool) []string {
 	var lines []string
 
 	closed := 0
-	if workspace := herdrWorkspaceOf(lane.Main)[lane.key()]; workspace != "" {
+	if workspace := herdrWorkspaceOf(lane.Main)[lane.key()]; closeTabs && workspace != "" {
 		for _, tab := range herdrTabs(workspace) {
 			if tab.Label == devTab || strings.HasPrefix(tab.Label, "dev:") {
 				if herdr(nil, "tab", "close", tab.TabID) == nil {
@@ -263,8 +287,8 @@ func down(lane Lane) []string {
 
 	// Closing a pane ends what runs in it, but not what that started elsewhere
 	// (a container): the app's stop line takes that down.
-	for _, app := range cfg.Apps {
-		if app.Stop == "" || app.Shared {
+	for _, app := range apps {
+		if app.Stop == "" {
 			continue
 		}
 		line := cfg.expand(app.Stop, app, lane)
@@ -275,7 +299,9 @@ func down(lane Lane) []string {
 			lines = append(lines, fmt.Sprintf("%-8s stopped", app.Name))
 		}
 	}
-	lines = append(lines, fmt.Sprintf("closed %d dev tabs of %s", closed, lane.Name))
+	if closeTabs {
+		lines = append(lines, fmt.Sprintf("closed %d dev tabs of %s", closed, lane.Name))
+	}
 	return lines
 }
 

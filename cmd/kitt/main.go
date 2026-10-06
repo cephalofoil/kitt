@@ -21,17 +21,21 @@ const usage = `kitt — lanes for parallel work
   kitt pr <number>               check an open pull request out as a lane, to look at it before the merge
   kitt agent [lane] [--prompt t] start the lane's agent, or hand the running one a prompt
   kitt ls [--all] [--json]       the lanes
-  kitt focus [lane]              go into a lane: its herdr workspace, its dev servers, its app in the emulator
+  kitt focus [lane] [--force]    go into a lane: its herdr workspace, its dev servers, its app in the emulator
   kitt up [lane] [app...]        start the lane's dev servers on its own ports
   kitt down [lane]               stop them
-  kitt emu [lane]                point the emulator at the lane's Metro
+  kitt emu [lane] [--force]      point the emulator at the lane's Metro
+  kitt claim [lane]              take the stack for a test (single mode) and start the lane's servers
+        [--wait 10m] [--reason t]  wait for a lane holding it · say what for
+  kitt release [lane] [--down]   hand the stack back; --down also stops the servers
+  kitt who [--json]              which lane holds each repo's stack, and the emulator
   kitt open [lane] [app]         open the lane's web app in the browser
   kitt env [lane]                the lane's ports
   kitt check [lane] [--all]      run the repo's checks for the apps the lane touched
-  kitt proof begin               take the emulator, load the lane's app
+  kitt proof begin [--wait 10m]  take the emulator (and the stack in single mode), load the lane's app
   kitt proof shot <label>        a screenshot into the proof
   kitt proof add <file> [label]  any other image into the proof
-  kitt proof end --pass|--fail   release the emulator, write the proof page
+  kitt proof end --pass|--fail   release the emulator and the stack, write the proof page
   kitt proof open [lane]         look at a lane's proof
   kitt adopt [lane|path]         make an existing worktree a lane
   kitt link [lane]               link the env files again
@@ -49,6 +53,9 @@ The emulator is an Android emulator through adb or, on a Mac, a booted iOS simul
 kitt picks the one running (Android first). KITT_PLATFORM=android|ios, or platform in
 kitt.toml's [emulator], chooses.
 
+[stack] mode = "single" in kitt.toml runs one lane's servers at a time: focus and up take
+the stack over and stop the lane that had it; a proof or a claim holds it until released.
+
 A lane is named by its name, <repo>/<name>, its issue number or ticket, or nothing at all
 inside its directory.
 `
@@ -62,6 +69,7 @@ func main() {
 		"dash": cmdDash, "new": cmdNew, "ls": cmdLs, "list": cmdLs, "focus": cmdFocus, "up": cmdUp, "down": cmdDown,
 		"emu": cmdEmu, "env": cmdEnv, "check": cmdCheck, "proof": cmdProof, "adopt": cmdAdopt, "link": cmdLink,
 		"rm": cmdRm, "agent": cmdAgent, "logo": cmdLogo, "setup": cmdSetup, "pr": cmdPr, "open": cmdOpen, "detect": cmdDetect, "repo": cmdRepo, "init": cmdInit, "doctor": cmdDoctor,
+		"claim": cmdClaim, "release": cmdRelease, "who": cmdWho,
 	}
 	command, ok := commands[os.Args[1]]
 	if !ok {
