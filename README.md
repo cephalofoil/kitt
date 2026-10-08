@@ -33,28 +33,32 @@ kitt dash --workspace         # the dashboard as its own herdr workspace
 kitt new 338                  # lane for issue 338: worktree, branch, env links, install, and an agent started on the issue
 kitt new 412 --apps web       # a lane about the website: starts the web app, leaves the emulator alone
 kitt new settings-proto --prompt "/wayfinder settings across several screens"
+kitt new tryout --blank --up  # no ticket: a lane, a blank agent to talk to, its dev servers running
 ```
+
+The agent opens as soon as the worktree is there; the install runs after it, and a prompt waits for the install.
 
 In the dashboard, one row per lane: the apps it has changed files of, the agent's state, uncommitted and behind counts, the PR and its checks, the last proof, which dev servers answer, and which lane the emulator shows.
 
 | Key | |
 |---|---|
-| `enter` | go into the lane: its herdr workspace and agent, its dev servers started, its app in the emulator |
+| `enter` | go into the lane, after a dialog that offers what fits its state: go to it as it is (first, when it is open), a blank Claude or one more beside the one at work, its dev servers started or restarted with its app in the emulator, Claude put on the issue or told what you type |
 | `g` | start the lane's agent (on its issue, if it has one) |
 | `e` | only point the emulator at the lane |
+| `h` | load the lane on a phone on the Wi-Fi: a second Metro told this machine's address, and the code to scan |
 | `o` | open the lane's web app in the browser |
 | `i` | install what the lane runs, when a lane shows `no install` (installs run one lane at a time) |
 | `u` / `d` | start / stop the lane's dev servers |
 | `c` | run the repo's checks for the apps the lane touched |
 | `p` | open the lane's proof |
-| `n` | new lane: an issue number starts an agent on it, a name only makes the lane |
+| `n` | new lane: an issue number or a name, then a dialog for how it opens: a blank Claude, a blank Claude with the dev servers, or Claude prompted (with the issue, or what you type) with the dev servers |
 | `a` | adopt a worktree kitt did not create (Claude's, herdr's, a hand-made one) |
 | `x` | remove a lane that holds nothing unsaved |
 | `t` | show the worktrees that are not lanes |
 
 Under the lanes, the open pull requests that have no lane yet (a bot's are left out). `enter` on one fetches its branch and checks it out as a lane about the apps it touches; `o` shows it on GitHub. The same from the shell: `kitt pr 380`.
 
-Every key is also a command: `kitt focus`, `kitt agent`, `kitt emu`, `kitt up`, `kitt check`, `kitt proof open`, `kitt adopt`, `kitt rm`. See `kitt help`.
+Every key is also a command: `kitt focus`, `kitt agent`, `kitt emu`, `kitt phone`, `kitt up`, `kitt check`, `kitt proof open`, `kitt adopt`, `kitt rm`. See `kitt help`.
 
 ### The header
 
@@ -78,6 +82,7 @@ The tube is drawn with Unicode sextants (U+1FB00 and up). A font without them sh
 - **Ports.** Each lane holds a slot; an app listens on its base port plus ten per slot (Metro 8081 in the main checkout, 8091 in the first lane). `kitt env` prints a lane's ports.
 - **Env files.** The gitignored files named under `link` are symlinks into the main checkout, so every lane sees the same secrets and an edit reaches all of them.
 - **The emulator.** One device, one installed dev client. `kitt emu` reverses the lane's ports into it and sends the client to the lane's Metro; no native build. A proof holds a lock, so two agents never load over each other.
+- **A phone.** A device on the Wi-Fi cannot reach the `localhost` a lane's app is told. `kitt phone` starts a second Metro next to the lane's (8112 beside 8111), with every local address in the app's env replaced by this machine's address on the network, and prints a code the phone's camera opens the dev client with. The lane's own Metro and the emulator are untouched; `kitt down` stops both. `--host` names the address where the machine has several.
 - **Shared apps.** An app marked `shared` runs once, from the main checkout, for every lane (a database, a backend whose port is fixed).
 
 ## kitt.toml

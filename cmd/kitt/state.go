@@ -24,7 +24,9 @@ type LaneState struct {
 	Created time.Time `json:"created"`
 	Setup   []string  `json:"setup,omitempty"`
 	// Apps are the apps this lane is about; empty means the repo's usual ones.
-	Apps   []string     `json:"apps,omitempty"`
+	Apps []string `json:"apps,omitempty"`
+	// Phone is the address of this machine the lane's phone Metro was started for.
+	Phone  string       `json:"phone,omitempty"`
 	Checks *CheckResult `json:"checks,omitempty"`
 	Proof  *ProofState  `json:"proof,omitempty"`
 }

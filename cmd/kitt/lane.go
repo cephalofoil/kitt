@@ -298,13 +298,13 @@ func describeRepo(cfg RepoConfig) {
 // --- kitt new ----------------------------------------------------------------
 
 func cmdNew(args []string) error {
-	rest, opts := flags(args, "agent", "no-agent", "focus", "no-setup")
+	rest, opts := flags(args, "agent", "blank", "no-agent", "focus", "no-setup", "up")
 	var apps []string
 	if opts["apps"] != "" {
 		apps = strings.Split(opts["apps"], ",")
 	}
 	if len(rest) == 0 {
-		return fail("usage: kitt new <issue number | name> [--repo r] [--base ref] [--apps web,admin] [--agent | --no-agent] [--prompt text] [--focus]")
+		return fail("usage: kitt new <issue number | name> [--repo r] [--base ref] [--apps web,admin] [--agent | --blank | --no-agent] [--prompt text] [--up] [--focus]")
 	}
 	repo, err := findRepo(opts["repo"])
 	if err != nil {
@@ -394,6 +394,17 @@ func cmdNew(args []string) error {
 
 	fmt.Printf("lane %s  slot %d  %s\n  %s\n", name, lane.Slot, branch, path)
 	linkFiles(lane, cfg, os.Stdout)
+
+	// A lane made for an issue is made to be worked on: the agent starts unless told not to.
+	wantsAgent := opts["agent"] != "" || opts["blank"] != "" || opts["prompt"] != "" || (entry.Issue > 0 && opts["no-agent"] == "")
+	// The agent opens before the install, which takes minutes: it can be talked
+	// to meanwhile. Its prompt waits, so it does not install over the install.
+	pane := ""
+	if wantsAgent && workspace != "" {
+		if pane, err = openAgent(lane, cfg); err != nil {
+			return err
+		}
+	}
 	if opts["no-setup"] == "" {
 		setupLane(lane, cfg)
 	}
@@ -403,15 +414,27 @@ func cmdNew(args []string) error {
 		}
 	}
 
-	// A lane made for an issue is made to be worked on: the agent starts unless told not to.
-	wantsAgent := opts["agent"] != "" || opts["prompt"] != "" || (entry.Issue > 0 && opts["no-agent"] == "")
-	if !wantsAgent {
+	if wantsAgent {
+		if workspace == "" {
+			return fail("an agent needs herdr: start one in %s yourself", path)
+		}
+		prompt := opts["prompt"]
+		if opts["blank"] == "" {
+			prompt = agentPrompt(lane, cfg, prompt)
+		}
+		if err := promptAgent(lane, pane, prompt); err != nil {
+			return err
+		}
+	}
+	if opts["up"] == "" {
 		return nil
 	}
-	if workspace == "" {
-		return fail("an agent needs herdr: start one in %s yourself", path)
+	// The agent has the lane's shell pane, the dev servers get a tab of their own.
+	started, err := up(lane, nil, false)
+	for _, line := range started {
+		fmt.Println("  " + line)
 	}
-	return startAgent(lane, cfg, opts["prompt"])
+	return err
 }
 
 const issuePrompt = "Work on issue #{issue}: {title}. Read it first with `gh issue view {issue} --comments`. " +
@@ -422,9 +445,19 @@ const issuePrompt = "Work on issue #{issue}: {title}. Read it first with `gh iss
 // pane unless one is already there, then hands it the prompt, or for an issue
 // lane with no prompt given, the issue.
 func startAgent(lane Lane, cfg RepoConfig, prompt string) error {
+	pane, err := openAgent(lane, cfg)
+	if err != nil {
+		return err
+	}
+	return promptAgent(lane, pane, agentPrompt(lane, cfg, prompt))
+}
+
+// openAgent starts an agent in the lane's shell pane unless one is already
+// there, and returns the pane it is in.
+func openAgent(lane Lane, cfg RepoConfig) (string, error) {
 	workspace, err := herdrOpen(lane, false)
 	if err != nil || workspace == "" {
-		return fail("could not open %s in herdr: %v", lane.Name, err)
+		return "", fail("could not open %s in herdr: %v", lane.Name, err)
 	}
 
 	target := ""
@@ -448,23 +481,68 @@ func startAgent(lane Lane, cfg RepoConfig, prompt string) error {
 			}
 		}
 		if pane == "" {
-			return fail("workspace %s has no shell pane to start an agent in", workspace)
+			return "", fail("workspace %s has no shell pane to start an agent in", workspace)
 		}
 		name := agentName(lane.Name)
 		fmt.Printf("starting %s as %q\n", cfg.Agent.Kind, name)
 		if err := herdrTimeout(nil, 90*time.Second, "agent", "start", name, "--kind", cfg.Agent.Kind, "--pane", pane, "--timeout", "60000"); err != nil {
-			return err
+			return "", err
 		}
 		target = pane
 	}
+	return target, nil
+}
 
-	if prompt == "" && lane.State != nil && lane.State.Issue > 0 {
-		prompt = cfg.Agent.Prompt
-		if prompt == "" {
-			prompt = issuePrompt
-		}
-		prompt = strings.NewReplacer("{issue}", strconv.Itoa(lane.State.Issue), "{title}", lane.State.Title, "{url}", lane.State.URL).Replace(prompt)
+// anotherAgent starts one more agent in a lane, in a tab of its own: the one
+// at work stays at it. It returns the pane the new one is in.
+func anotherAgent(lane Lane, cfg RepoConfig) (string, error) {
+	workspace, err := herdrOpen(lane, false)
+	if err != nil || workspace == "" {
+		return "", fail("could not open %s in herdr: %v", lane.Name, err)
 	}
+	count := 1
+	for _, agent := range herdrAgents() {
+		if agent.WorkspaceID == workspace && within(agent.Cwd, lane.Path) {
+			count++
+		}
+	}
+	var created struct {
+		RootPane struct {
+			ID string `json:"pane_id"`
+		} `json:"root_pane"`
+	}
+	label := fmt.Sprintf("%s %d", cfg.Agent.Kind, count)
+	if err := herdr(&created, "tab", "create", "--workspace", workspace, "--cwd", lane.Path, "--label", label, "--no-focus"); err != nil {
+		return "", err
+	}
+	// Two agents of a lane are told apart by a number, inside what herdr takes for a name.
+	name, suffix := agentName(lane.Name), fmt.Sprintf("-%d", count)
+	if len(name)+len(suffix) > 32 {
+		name = strings.TrimRight(name[:32-len(suffix)], "-")
+	}
+	name += suffix
+	fmt.Printf("starting %s as %q\n", cfg.Agent.Kind, name)
+	if err := herdrTimeout(nil, 90*time.Second, "agent", "start", name, "--kind", cfg.Agent.Kind, "--pane", created.RootPane.ID, "--timeout", "60000"); err != nil {
+		return "", err
+	}
+	return created.RootPane.ID, nil
+}
+
+// agentPrompt is what a lane's agent is told: the prompt given, or for an
+// issue lane with none given, the issue.
+func agentPrompt(lane Lane, cfg RepoConfig, prompt string) string {
+	if prompt != "" || lane.State == nil || lane.State.Issue == 0 {
+		return prompt
+	}
+	prompt = cfg.Agent.Prompt
+	if prompt == "" {
+		prompt = issuePrompt
+	}
+	return strings.NewReplacer("{issue}", strconv.Itoa(lane.State.Issue), "{title}", lane.State.Title, "{url}", lane.State.URL).Replace(prompt)
+}
+
+// promptAgent hands the agent in a pane its prompt; with none it is left blank.
+func promptAgent(lane Lane, target, prompt string) error {
 	if prompt == "" {
 		fmt.Printf("agent ready in %s\n", lane.Name)
 		return nil
