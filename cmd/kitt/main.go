@@ -19,6 +19,7 @@ const usage = `kitt — lanes for parallel work
   kitt pr <number>               check an open pull request out as a lane, to look at it before the merge
   kitt agent [lane] [--prompt t] start the lane's agent, or hand the running one a prompt
   kitt ls [--all] [--json]       the lanes
+  kitt backlog [--repo r] [--json]  the repo's open issues, and which of them has a lane
   kitt focus [lane]              go into a lane: its herdr workspace, its dev servers, its app in the emulator
         [--blank | --agent | --prompt t | --new-agent]  with a blank agent, one on its issue, one told t, or one more
         [--no-up | --restart]      without the servers · with them stopped and started again
@@ -56,7 +57,7 @@ func main() {
 		return
 	}
 	commands := map[string]func([]string) error{
-		"dash": cmdDash, "new": cmdNew, "ls": cmdLs, "list": cmdLs, "focus": cmdFocus, "up": cmdUp, "down": cmdDown,
+		"dash": cmdDash, "new": cmdNew, "backlog": cmdBacklog, "ls": cmdLs, "list": cmdLs, "focus": cmdFocus, "up": cmdUp, "down": cmdDown,
 		"emu": cmdEmu, "phone": cmdPhone, "env": cmdEnv, "check": cmdCheck, "proof": cmdProof, "adopt": cmdAdopt, "link": cmdLink,
 		"rm": cmdRm, "agent": cmdAgent, "logo": cmdLogo, "setup": cmdSetup, "pr": cmdPr, "open": cmdOpen, "detect": cmdDetect, "repo": cmdRepo, "init": cmdInit, "doctor": cmdDoctor,
 	}

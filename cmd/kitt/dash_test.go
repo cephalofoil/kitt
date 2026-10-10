@@ -180,3 +180,93 @@ func TestEnterOnALane(t *testing.T) {
 		t.Errorf("after choosing to tell Claude something: mode %q", d.mode)
 	}
 }
+
+func TestBacklog(t *testing.T) {
+	t.Setenv("KITT_HOME", t.TempDir())
+	issues := []Issue{
+		{Number: 412, Title: "Empty state for the library", Labels: []string{"mobile", "ux"}, Author: "ada",
+			Body: "<!-- template -->\n## What\n\nShow something when there are no recipes.\n\n\n```\ncode here\n```\n" + strings.Repeat("One more line of it.\n\n", 40)},
+		{Number: 409, Title: "Login fails on a slow network", Labels: []string{"bug"}, Author: "bob"},
+	}
+	lane := LaneView{Lane: Lane{Repo: "r", Name: "409-login", Managed: true, State: &LaneState{Issue: 409}}, Workspace: "w1"}
+	d := dash{loaded: true, width: 140, height: 30, rows: []LaneView{lane},
+		backlog: backlog{open: true, repo: "r", issues: issues, loaded: true}}
+
+	view := ansi.Strip(d.View())
+	for _, want := range []string{"backlog · r · 2 open issues", "#412", "Show something when there are no recipes.", "by ada", "mobile · ux", "◆ lane", "space reads on"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the backlog lacks %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "template") || strings.Contains(view, "```") {
+		t.Errorf("the backlog shows what is not the issue's text:\n%s", view)
+	}
+	if lines := strings.Count(view, "\n"); lines > 30 {
+		t.Errorf("the backlog is %d lines in a pane of 30", lines)
+	}
+	// A narrow pane has the list above the issue, and stays inside it too.
+	narrow := d
+	narrow.width = 70
+	for _, line := range strings.Split(ansi.Strip(narrow.View()), "\n") {
+		if len([]rune(line)) > 70 {
+			t.Errorf("a line of the narrow backlog is %d wide: %q", len([]rune(line)), line)
+		}
+	}
+
+	// Reading on scrolls the issue, moving to another starts it at the top.
+	if d = keys(d, " "); d.backlog.scroll == 0 {
+		t.Error("space did not read on")
+	}
+	if d = keys(d, "j"); d.backlog.cursor != 1 || d.backlog.scroll != 0 {
+		t.Errorf("after j: cursor %d, scroll %d", d.backlog.cursor, d.backlog.scroll)
+	}
+
+	// An issue that has a lane is gone into.
+	in := keys(d, "", tea.KeyEnter)
+	if in.mode != "how" || in.title != "open " || in.pending != "409-login" {
+		t.Errorf("enter on an issue with a lane: mode %q, title %q, pending %q", in.mode, in.title, in.pending)
+	}
+
+	// A filter takes letters that are keys elsewhere; one without a lane gets its lane made.
+	d = keys(d, "/", tea.KeyRunes)
+	d = keys(d, "bq ux", tea.KeyBackspace, tea.KeyBackspace, tea.KeyBackspace, tea.KeyBackspace, tea.KeyBackspace)
+	if !d.backlog.open || !d.backlog.typing || d.backlog.filter != "" {
+		t.Fatalf("while typing a filter: open %v, typing %v, filter %q", d.backlog.open, d.backlog.typing, d.backlog.filter)
+	}
+	d = keys(d, "ux", tea.KeyEnter)
+	if shown := d.shownIssues(); len(shown) != 1 || shown[0].Number != 412 || d.backlog.cursor != 0 {
+		t.Fatalf("filter ux shows %v, cursor %d", shown, d.backlog.cursor)
+	}
+	d = keys(d, "", tea.KeyEnter)
+	same(t, "an issue of the backlog", calls(d.openings), d.choice, []string{
+		"new 412 --repo r --blank --focus",
+		"new 412 --repo r --blank --up --focus",
+		"new 412 --repo r --up",
+	}, 2)
+	if view := ansi.Strip(d.View()); !strings.Contains(view, "new lane #412 Empty state") || !strings.Contains(view, "through to a pull request") || !strings.Contains(view, "backlog · r") {
+		t.Errorf("the dialog over the backlog:\n%s", view)
+	}
+	// Taking one leaves the backlog: the lane shows among the lanes.
+	if d = keys(d, "1"); d.backlog.open || d.busy == "" {
+		t.Errorf("after taking an opening: backlog open %v, busy %q", d.backlog.open, d.busy)
+	}
+
+	// Esc clears a filter first, then leaves.
+	d = dash{loaded: true, backlog: backlog{open: true, repo: "r", issues: issues, loaded: true, filter: "bug"}}
+	if d = keys(d, "", tea.KeyEsc); !d.backlog.open || d.backlog.filter != "" {
+		t.Errorf("first esc: open %v, filter %q", d.backlog.open, d.backlog.filter)
+	}
+	if d = keys(d, "", tea.KeyEsc); d.backlog.open {
+		t.Error("second esc did not leave the backlog")
+	}
+}
+
+func TestIssuePrompt(t *testing.T) {
+	lane := Lane{State: &LaneState{Issue: 412, Title: "Empty state"}}
+	prompt := agentPrompt(lane, RepoConfig{}, "")
+	for _, want := range []string{"#412: Empty state", "gh issue view 412", "kitt check", "kitt proof end --pass", "gh pr create", "Closes #412", "Do not merge"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("the issue prompt lacks %q", want)
+		}
+	}
+}

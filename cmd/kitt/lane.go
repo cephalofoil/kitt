@@ -437,9 +437,13 @@ func cmdNew(args []string) error {
 	return err
 }
 
-const issuePrompt = "Work on issue #{issue}: {title}. Read it first with `gh issue view {issue} --comments`. " +
-	"This checkout is a kitt lane: run `kitt env` for its ports, `kitt check` before you report, " +
-	"and when the change is visible in the app, record a proof (`kitt proof begin`, `shot`, `end`)."
+const issuePrompt = "Implement issue #{issue}: {title}. Read it first with `gh issue view {issue} --comments`. " +
+	"This checkout is a kitt lane: `kitt env` prints its ports. The goal is a pull request that is ready to be merged, " +
+	"with the change seen working in the app. Build it, run `kitt check` and fix what fails, commit. " +
+	"Then prove it in the running app: `kitt proof begin`, `kitt proof shot <label>` for each state worth showing, " +
+	"`kitt proof end --pass` (or `--fail --note` and back to work). A change no app shows needs no proof: say so. " +
+	"After the proof, push and open the pull request with `gh pr create`: its body closes the issue (`Closes #{issue}`) " +
+	"and says what the proof shows. Do not merge it. Where the issue leaves open what to build, ask before building on a guess."
 
 // startAgent puts an agent to work in a lane: it starts one in the lane's shell
 // pane unless one is already there, then hands it the prompt, or for an issue

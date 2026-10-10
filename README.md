@@ -38,6 +38,8 @@ kitt new tryout --blank --up  # no ticket: a lane, a blank agent to talk to, its
 
 The agent opens as soon as the worktree is there; the install runs after it, and a prompt waits for the install.
 
+An agent put on an issue is told where it ends: the change built and checked, seen working in the app and recorded as a proof, then a pull request that closes the issue and says what the proof shows. It does not merge. `[agent] prompt` in `kitt.toml` replaces that text; `{issue}`, `{title}` and `{url}` are filled in.
+
 In the dashboard, one row per lane: the apps it has changed files of, the agent's state, uncommitted and behind counts, the PR and its checks, the last proof, which dev servers answer, and which lane the emulator shows.
 
 | Key | |
@@ -52,13 +54,14 @@ In the dashboard, one row per lane: the apps it has changed files of, the agent'
 | `c` | run the repo's checks for the apps the lane touched |
 | `p` | open the lane's proof |
 | `n` | new lane: an issue number or a name, then a dialog for how it opens: a blank Claude, a blank Claude with the dev servers, or Claude prompted (with the issue, or what you type) with the dev servers |
+| `b` | the backlog: the repo's open issues, the one under the cursor to read beside them (`space` reads on, `/` filters by words, a label or a number, `tab` goes to the next repo). `enter` on one makes its lane, after the same dialog: a blank Claude, or Claude put on the issue through to a pull request. An issue that has a lane already is gone into |
 | `a` | adopt a worktree kitt did not create (Claude's, herdr's, a hand-made one) |
 | `x` | remove a lane that holds nothing unsaved |
 | `t` | show the worktrees that are not lanes |
 
 Under the lanes, the open pull requests that have no lane yet (a bot's are left out). `enter` on one fetches its branch and checks it out as a lane about the apps it touches; `o` shows it on GitHub. The same from the shell: `kitt pr 380`.
 
-Every key is also a command: `kitt focus`, `kitt agent`, `kitt emu`, `kitt phone`, `kitt up`, `kitt check`, `kitt proof open`, `kitt adopt`, `kitt rm`. See `kitt help`.
+Every key is also a command: `kitt focus`, `kitt agent`, `kitt backlog`, `kitt emu`, `kitt phone`, `kitt up`, `kitt check`, `kitt proof open`, `kitt adopt`, `kitt rm`. See `kitt help`.
 
 ### The header
 

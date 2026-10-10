@@ -61,6 +61,9 @@ type dash struct {
 	// held is the lane a refused removal named, and why it was refused.
 	held   string
 	reason string
+
+	// backlog is a repo's open issues, shown in place of the lanes while it is open.
+	backlog backlog
 }
 
 type (
@@ -206,6 +209,13 @@ func (d dash) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return d, nil
 
+	case issuesMsg:
+		if msg.repo == d.backlog.repo {
+			d.backlog.issues, d.backlog.failed, d.backlog.loaded = msg.issues, msg.failed, true
+			d.backlog.cursor = min(d.backlog.cursor, max(0, len(d.shownIssues())-1))
+		}
+		return d, nil
+
 	case doneMsg:
 		d.busy, d.note, d.noteAt = "", string(msg), time.Now()
 		// A removal kitt refused holds unsaved work: ask a second time, differently.
@@ -228,6 +238,9 @@ func (d dash) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if d.mode != "" {
 			return d.typed(msg)
+		}
+		if d.backlog.open {
+			return d.backlogKey(msg)
 		}
 		return d.pressed(msg)
 	}
@@ -263,6 +276,8 @@ func (d dash) pressed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		d.cursor = 0
 	case "n":
 		d.mode, d.input = "new", ""
+	case "b":
+		return d.openBacklog(d.repoAtCursor())
 	}
 	// An open pull request: enter checks it out as a lane, o shows it on GitHub.
 	if at := d.cursor - len(rows); row == nil && at >= 0 && at < len(d.prs) {
@@ -367,14 +382,7 @@ func (d dash) pressed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (d dash) typed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	rows := d.visible()
-	repo := ""
-	if d.cursor < len(rows) {
-		repo = rows[d.cursor].Repo
-	} else if at := d.cursor - len(rows); at >= 0 && at < len(d.prs) {
-		repo = d.prs[at].Repo
-	} else if repos := loadGlobal().Repos; len(repos) > 0 {
-		repo = repos[0].Name
-	}
+	repo := d.repoAtCursor()
 
 	switch msg.Type {
 	case tea.KeyEsc, tea.KeyCtrlC:
@@ -474,6 +482,9 @@ func newArgs(input, repo string) ([]string, bool) {
 	return []string{"new", input, "--repo", repo}, issue
 }
 
+// issueHint says what an agent put on an issue is told to reach.
+const issueHint = "it reads the issue, builds it, proves it in the app and opens the PR; the dev servers start"
+
 // newOpenings are the ways a lane that is yet to be made opens, and the one
 // the dialog starts on: an issue is its own prompt, a name is a session.
 func newOpenings(input, repo string) ([]opening, int) {
@@ -484,7 +495,7 @@ func newOpenings(input, repo string) ([]opening, int) {
 		{"a blank Claude and the dev servers", "the same, with the lane's apps started on its ports", with("--blank", "--up", "--focus"), false},
 	}
 	if issue {
-		return append(list, opening{"Claude on the issue and the dev servers", "the agent reads the issue and starts by itself", with("--up"), false}), 2
+		return append(list, opening{"Claude on the issue, through to a pull request", issueHint, with("--up"), false}), 2
 	}
 	return append(list, opening{"Claude with a prompt and the dev servers", "you type what Claude is to do next, then it starts by itself", with("--up"), true}), 1
 }
@@ -533,7 +544,7 @@ func laneOpenings(row LaneView, cfg RepoConfig) ([]opening, int) {
 	case agent:
 		list = append(list, opening{"tell Claude something", "you type it next: it goes to the agent at work", focus("--no-up"), true})
 	case issue:
-		list = append(list, opening{"Claude on the issue and the dev servers", "the agent reads the issue and starts by itself", focus("--agent"), false})
+		list = append(list, opening{"Claude on the issue, through to a pull request", issueHint, focus("--agent"), false})
 	default:
 		list = append(list, opening{"Claude with a prompt and the dev servers", "you type what Claude is to do next, then it starts by itself", focus(), true})
 	}
@@ -557,6 +568,8 @@ func (d dash) create(prompt string) (tea.Model, tea.Cmd) {
 	if d.choice >= len(d.openings) {
 		return d, nil
 	}
+	// Back to the lanes: the one this opens or makes shows there.
+	d.backlog.open = false
 	args := append([]string{}, d.openings[d.choice].args...)
 	if prompt != "" {
 		args = append(args, "--prompt", prompt)
@@ -583,6 +596,13 @@ func (d dash) View() string {
 	width := d.width
 	if width <= 0 {
 		width = 100
+	}
+	if d.backlog.open {
+		screen := d.backlogView(width)
+		if d.mode == "how" {
+			return overlay(screen, d.dialog(width), width, d.height)
+		}
+		return screen
 	}
 	rows := d.visible()
 
@@ -802,7 +822,7 @@ func (d dash) phoneWindow(width, height int) string {
 func legend(width int) string {
 	keys := [][2]string{
 		{"enter", "open lane"}, {"e", "emulator"}, {"h", "phone"}, {"o", "browser"}, {"g", "agent"}, {"i", "install"}, {"u", "up"}, {"d", "down"}, {"c", "check"},
-		{"p", "proof"}, {"n", "new"}, {"a", "adopt"}, {"x", "remove"}, {"t", "all worktrees"}, {"q", "quit"},
+		{"p", "proof"}, {"n", "new"}, {"b", "backlog"}, {"a", "adopt"}, {"x", "remove"}, {"t", "all worktrees"}, {"q", "quit"},
 	}
 	var b strings.Builder
 	line := 2
