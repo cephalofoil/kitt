@@ -49,6 +49,10 @@ declare module 'claude-code' {
       hiddenPr: string | null
       hiddenRebase: string | null
       isLoaded: boolean
+      /** What a key is doing right now, as the band shows it; null when none is. */
+      doing: string | null
+      /** A key whose steps stopped: which, why, and the few words Claude is sent when the person hands it over. */
+      halted: { key: string; why: string; text: string } | null
     }
   }
 }

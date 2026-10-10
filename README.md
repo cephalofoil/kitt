@@ -149,15 +149,19 @@ Proofs are kept under kitt's own folder (`%APPDATA%\kitt\proofs`), outside the r
 
 Shown above the prompt, only when there is something to act on.
 
-A key never runs git itself. It sends Claude a few words, with the how-to attached where only Claude reads it. Claude decides whether and how to act and calls one of the mod's tools; the tool does the fixed steps and answers with what happened. So every action is a real tool call in the transcript that Claude can decline, redo with other arguments, or react to.
+A key runs its fixed steps itself, without a turn, and leaves Claude a note of what it did. While it runs, the band says what it is doing; during `kitt check`, the line the check last wrote. The one thing it needs a model for, a commit message or a PR's title and body, it asks of a fork of the session, which answers with text alone.
+
+A key never sends a prompt by itself. When the usual case does not hold (a refused push, a failing check, a commit hook that says no, a secret or unrelated changes the fork will not commit as one), the key stops and the band says why in two lines, with three keys: `s` shows the whole reason in the pane (which also opens by itself where there is room), `a` hands it to Claude, `d` dismisses it. Handed over, Claude gets a few words, with the how-to and the reason attached where only Claude reads them, and calls the mod's tools, which do the same fixed steps. While a turn is running a key does nothing but say so.
+
+Two keys do go to Claude directly, because that is what they are for: handing over a failing log, and a rebase the check already found conflicts in.
 
 | Shown | Key | What happens |
 |---|---|---|
 | the open PR: status, issue, one chip per check, the failing step and log lines | `1` `2` `3` `x` | retry failed jobs · hand the log to Claude · open in browser · hide |
-| uncommitted work | `c` | Claude writes the message the repo asks for and calls `commit`; no push |
-| commits not pushed, no PR yet | `p` | Claude runs the repo's checks, calls `push`, opens the PR |
-| commits not pushed, PR open | `p` | Claude calls `push` |
-| behind the default branch | `b` | Claude calls `rebase_and_push`: the branch is rebased onto the default branch and then pushed to its own remote branch, ready for a PR; on conflicts Claude rebases by hand and asks where a conflict is not clear |
+| uncommitted work | `c` | commits everything with the message the repo asks for, written by the fork; no push |
+| commits not pushed, no PR yet | `p` | runs `kitt check`, rebases if behind and clean, pushes, opens the PR the fork wrote; a repo without a kitt.toml goes to Claude |
+| commits not pushed, PR open | `p` | pushes (done by the mod; Claude is told); a refused push goes to Claude, who reads what the remote holds |
+| behind the default branch | `b` | the branch is rebased onto the default branch and then pushed to its own remote branch, ready for a PR: done by the mod when the tree is clean and the check found no conflicts, otherwise Claude calls `rebase_and_push`, rebases by hand on conflicts and asks where a conflict is not clear |
 | the PR is merged | `m` | switches to the default branch, brought up to date (done by the mod; Claude is told) |
 
 **Merging is yours.** No key and no tool merges. When Claude runs `gh pr merge` anyway, the call is held and you are asked; anything but "Merge" refuses it.

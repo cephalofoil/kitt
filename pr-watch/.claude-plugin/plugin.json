@@ -1,6 +1,6 @@
 {
   "name": "pr-watch",
-  "version": "0.5.1",
+  "version": "0.6.2",
   "description": "Above the prompt: the branch PR with its checks and failing log lines, uncommitted work with a commit-and-push key, and how far the branch is behind the default branch with a rebase key. The branch name sits in the hint line.",
   "types": "./types/index.d.ts",
   "author": {
