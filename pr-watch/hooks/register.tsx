@@ -15,8 +15,9 @@ const FETCH_TICKS = 20
 // The tools Claude calls to act on the branch: each does fixed steps and answers
 // with what happened. A key of the band runs the same steps itself, without a
 // turn; the one thing it needs a model for, a commit message or a PR's text, it
-// asks of a fork of the session. A key never sends a prompt by itself: when a
-// step does not go through, the band says why and offers to hand it to Claude.
+// asks of a fork of the session. When a step does not go through, the band says
+// so in one line with two keys: resolve it with Claude, or cancel. Only the first
+// gives Claude a turn.
 const TOOL = {
   commit: 'mcp__pr-watch__commit',
   push: 'mcp__pr-watch__push',
@@ -66,12 +67,21 @@ const WRITE = {
     `If something should not be committed as it is (a secret, generated junk, work that is visibly broken), or the changes are clearly ` +
     `unrelated and belong in separate commits, answer instead with one line starting "ASK: " and the reason.`,
   pr:
-    `The person pressed the Push & open PR key of the pr-watch band. The checks passed and the branch is pushed. Write the pull request ` +
+    `The person pressed the Push & open PR key of the pr-watch band. The branch is pushed. Write the pull request ` +
     `for the commits below, following the repo's PR conventions: title style, the sections its instructions ask for, the issue it closes. ` +
     `Where a proof is given, say in the body what it shows. Answer with the title on the first line, an empty line, then the body in ` +
     `Markdown. No quotes, no code fence around the whole.`,
 } as const
-const MOST = 80_000
+// How much of a diff a model is shown, and how many changed files a commit by key may have.
+const MOST = 200_000
+const FILES = 1000
+
+// What Claude reads beside a key's few words when the key tried first and the person had it resolved.
+const TRIED =
+  `The key ran its fixed steps itself first, without a turn; a step failed, and the person chose to have you do it. Why it failed ` +
+  `follows. Say in one line what went wrong, then do what the key was doing, leaving out what already went through. Ask first only ` +
+  `where the decision is the person's: a secret or junk among the changes, someone else's commits on the remote. Keep the answer ` +
+  `to a few lines.`
 
 /** What the Rebase key sends: the branch goes onto the base, then the branch itself is pushed. */
 const rebaseAsk = (base: string): string => `${ASK.rebase}${base.replace(/^origin\//, '')} and push the branch.`
@@ -403,10 +413,23 @@ type Answer = { result: string; isDone?: true } | { deny: string }
 
 const answerOf = (out: Answer): Answer => ('deny' in out ? out : { result: out.result })
 
+/** A step failed: the band says so in one line, with a key to resolve it with Claude and one to cancel. */
+async function stop($: EngineInterface, key: string, why: string, text: string) {
+  await update($, doing, () => null)
+  await update($, halted, () => ({ key, why, text }))
+}
+
+/** The person chose Claude: the key's own few words are sent, the reason rides along unseen. */
+async function resolve($: EngineInterface, halt: { why: string; text: string }) {
+  stopped = halt.why
+  await update($, halted, () => null)
+  void $.prompt.submit({ text: halt.text, asUser: true })
+}
+
 /**
  * Runs a tool's fixed steps for a key, without a turn, and tells Claude what
- * was done. No prompt is sent from here: a step that does not go through stays
- * in the band with its reason, and `text` is what the person may hand to Claude.
+ * was done. `text` is what the key asks of Claude when a step fails and the
+ * person has it resolved.
  */
 async function act($: EngineInterface, said: string, step: () => Promise<Answer>, text: string) {
   if (isActing) return
@@ -432,34 +455,14 @@ async function act($: EngineInterface, said: string, step: () => Promise<Answer>
       $.ui.toast(out.result, { timeoutMs: 8000 })
       await tell($, `${said}: ${out.result}`)
     } else {
-      await update($, halted, () => ({ key, why: out.result, text }))
-      await show($, `${key} stopped`)
+      await stop($, key, out.result, text)
     }
   } catch (error) {
     // A step that threw is a step that did not go through.
-    const why = error instanceof Error ? error.message : String(error)
-
-    await update($, halted, () => ({ key, why, text }))
-    await show($, `${key} stopped`)
+    await stop($, key, error instanceof Error ? error.message : String(error), text)
   } finally {
     isActing = false
     await update($, doing, () => null)
-  }
-}
-
-/** Hands a stopped key to Claude: its few words, the reason riding along. */
-async function handOver($: EngineInterface, halt: { why: string; text: string }) {
-  stopped = halt.why
-  await update($, halted, () => null)
-  void $.prompt.submit({ text: halt.text, asUser: true })
-}
-
-/** Opens the pane, where a stopped key's reason is shown whole. */
-async function show($: EngineInterface, title: string) {
-  try {
-    await $.ui.open({ id: PANE, title, rows: 20 })
-  } catch {
-    // A session that draws no pane still has the band.
   }
 }
 
@@ -488,17 +491,17 @@ async function commitTool($: EngineInterface, input: { subject?: unknown; body?:
 
   const added = await run($, paths.length > 0 ? ['git', 'add', '--', ...paths] : ['git', 'add', '-A'], 60_000)
 
-  if (added?.exitCode !== 0) return { result: `Nothing was committed: git add failed: ${why(added)}` }
+  if (added?.exitCode !== 0) return { result: `git add failed: ${why(added)}\nNothing was committed.` }
 
   const staged = await run($, ['git', 'diff', '--cached', '--quiet'])
 
-  if (staged?.exitCode === 0) return { result: 'Nothing was committed: there is nothing staged for these paths.' }
+  if (staged?.exitCode === 0) return { result: 'There is nothing to commit for these paths.' }
 
   // A repo's commit hooks run here and may take their time.
   const committed = await run($, ['git', 'commit', '-m', subject, ...(body === '' ? [] : ['-m', body])], 300_000)
 
   if (committed?.exitCode !== 0) {
-    return { result: `The commit was refused; the changes stay staged. Output:\n${tail(committed, 30)}` }
+    return { result: `git refused the commit.\nThe changes stay staged. Output:\n${tail(committed, 30)}` }
   }
 
   const sha = (await text($, ['git', 'rev-parse', '--short', 'HEAD'])) ?? ''
@@ -552,7 +555,7 @@ async function pushTool($: EngineInterface, input: { force_with_lease?: unknown 
 
   return {
     result:
-      `The push was refused: origin/${git.branch} holds commits the local branch does not have:\n${theirs}\n` +
+      `The remote branch has commits this one lacks.\norigin/${git.branch} holds:\n${theirs}\n` +
       `If these are this branch's own commits from before a rebase, call the tool again with force_with_lease: true. ` +
       `If any is someone else's work, do not force: stop and tell the person.`,
   }
@@ -585,7 +588,7 @@ async function rebaseTool($: EngineInterface): Promise<Answer> {
 
     return {
       result:
-        `A plain rebase onto ${git.base} does not go through; it was undone and the branch is as before.\n` +
+        `The rebase onto ${git.base} has conflicts.\nIt was undone and the branch is as before.\n` +
         (files === '' ? `git said: ${why(rebased)}` : `Conflicts in:\n${files}`),
     }
   }
@@ -603,7 +606,7 @@ async function rebaseTool($: EngineInterface): Promise<Answer> {
   const outcome =
     pushed?.exitCode === 0
       ? `${did} and pushed it to origin/${git.branch}${isRebased && upstream !== null ? ' with --force-with-lease; its commits have new ids' : ''}. A PR can be opened from it now.`
-      : `${did}, but pushing the branch was refused: ${why(pushed)}`
+      : `The push was refused: ${why(pushed)}\n${did}; only the push is missing.`
   await refreshGit($)
   await refreshPr($)
 
@@ -632,55 +635,65 @@ async function instructions($: EngineInterface): Promise<string> {
  * was not written. A session with no answer yet has nothing to fork, so a
  * model on its own writes it, from the repo's instructions.
  */
-async function write($: EngineInterface, prompt: string): Promise<{ head: string; rest: string } | { result: string }> {
+async function write($: EngineInterface, what: string, prompt: string): Promise<{ head: string; rest: string } | { result: string }> {
   const forked = await $.model.fork({ prompt })
   const reply =
     !forked.isAnswered && forked.reason === 'nothing-to-fork'
       ? await $.model.complete({ model: 'sonnet', prompt, system: await instructions($), maxTokens: 2000 })
       : forked
 
-  if (!reply.isAnswered) return { result: `No text could be written (${reply.reason}).` }
+  if (!reply.isAnswered) return { result: `The ${what} could not be written (${reply.reason}).` }
 
   const said = reply.text.trim().replace(/^```\w*\r?\n|\r?\n```$/g, '').trim()
   const [head = '', ...rest] = said.split(/\r?\n/)
 
   if (head.startsWith('ASK:')) return { result: said.slice(4).trim() }
-  if (head === '' || head.length > 200) return { result: 'What was written does not start with a one-line subject.' }
+  if (head === '' || head.length > 200) return { result: `The ${what} came back without a one-line subject.` }
 
   return { head: head.trim(), rest: rest.join('\n').trim() }
 }
 
-/** The uncommitted work as text: status, the diff of tracked files, new files whole; `isCut` when it is not all of it. */
-async function changes($: EngineInterface): Promise<{ shown: string; isCut: boolean }> {
-  const status = (await text($, ['git', 'status', '--porcelain'])) ?? ''
+/**
+ * The uncommitted work as text: every changed file by name and size of change,
+ * then the diff, new files whole. A long diff is cut and says so: the list of
+ * files stays complete, and the fork knows from the session what was done.
+ */
+async function changes($: EngineInterface): Promise<{ shown: string; files: number }> {
+  const status = ((await text($, ['git', 'status', '--porcelain'])) ?? '').split(/\r?\n/).filter(Boolean)
   const log = (await text($, ['git', 'log', '-8', '--format=%s'])) ?? ''
+  const stat = (await text($, ['git', 'diff', 'HEAD', '--stat'])) ?? ''
   const diff = (await run($, ['git', 'diff', 'HEAD']))?.stdout ?? ''
   const fresh = ((await text($, ['git', 'ls-files', '--others', '--exclude-standard'])) ?? '').split(/\r?\n/).filter(Boolean)
-  const added: string[] = []
+  let all = diff
 
-  for (const path of fresh.slice(0, 20)) {
-    added.push((await run($, ['git', 'diff', '--no-index', '--', '/dev/null', path]))?.stdout ?? '')
+  for (const path of fresh) {
+    if (all.length > MOST) break
+
+    all = `${all}\n${(await run($, ['git', 'diff', '--no-index', '--', '/dev/null', path]))?.stdout ?? ''}`
   }
 
-  const all = `${diff}\n${added.join('\n')}`
-
   return {
-    shown: `Last subjects:\n${log}\n\ngit status --porcelain:\n${status}\n\nDiff:\n${all}`,
-    isCut: all.length > MOST || fresh.length > 20,
+    files: status.length,
+    shown:
+      `Last subjects:\n${log}\n\ngit status --porcelain:\n${status.join('\n')}\n\nNew files:\n${fresh.join('\n')}\n\n` +
+      `git diff --stat:\n${stat}\n\nDiff:\n${all.slice(0, MOST)}` +
+      (all.length > MOST ? '\n(The diff is cut here. The lists above name every changed file.)' : ''),
   }
 }
 
 async function commitKey($: EngineInterface): Promise<Answer> {
   const git = await branchFor($)
 
-  if ('deny' in git) return { result: git.deny }
+  if ('deny' in git) return { result: git.deny.replace('. ', '.\n') }
 
   const work = await changes($)
 
-  // A fork that reads part of the changes cannot say that all of them may be committed.
-  if (work.isCut) return { result: 'The changes are too large for the key to read whole, so nothing was committed. Look at them before committing.' }
+  // Thousands of files are not a change someone made by hand: a folder that wants ignoring, more likely.
+  if (work.files > FILES) {
+    return { result: `${work.files} files are uncommitted: too many for one commit.\nThat looks like generated files or a folder that should be ignored. Nothing was committed.` }
+  }
 
-  const message = await write($, `${WRITE.commit}\n\n${work.shown}`)
+  const message = await write($, 'commit message', `${WRITE.commit}\n\n${work.shown}`)
 
   return 'result' in message ? message : commitTool($, { subject: message.head, body: message.rest })
 }
@@ -710,10 +723,23 @@ async function check($: EngineInterface): Promise<{ exitCode: number | null; std
   }
 }
 
+/** Why `gh pr create` refused, in a few words; gh's own last line where the cause is not a known one. */
+function ghSaid(ran: { stderr: string; stdout: string } | null): string {
+  const said = `${ran?.stderr ?? ''}${ran?.stdout ?? ''}`
+
+  if (ran === null) return 'gh did not answer.'
+  if (/known GitHub host|not a git repository|no git remotes/i.test(said)) return 'this repo has no remote on GitHub.'
+  if (/already exists/i.test(said)) return 'this branch already has a PR.'
+  if (/gh auth login|authentication|HTTP 401/i.test(said)) return 'gh is not logged in.'
+  if (/No commits between/i.test(said)) return 'the branch has no commits the default branch lacks.'
+
+  return why(ran)
+}
+
 async function shipKey($: EngineInterface): Promise<Answer> {
   const git = await branchFor($)
 
-  if ('deny' in git) return { result: git.deny }
+  if ('deny' in git) return { result: git.deny.replace('. ', '.\n') }
 
   let hasKitt = true
 
@@ -722,17 +748,17 @@ async function shipKey($: EngineInterface): Promise<Answer> {
   } catch {
     hasKitt = false
   }
-  if (!hasKitt) return { result: 'This repo has no kitt.toml: which checks to run is in its instructions. Nothing was run or pushed.' }
+  // A repo without a kitt.toml names no checks a key could run: the PR is opened all the same, and says so.
+  const checked = hasKitt ? await check($) : { exitCode: 0, stdout: '', stderr: '' }
+  const checks = hasKitt ? 'kitt check passed' : 'no checks were run (this repo has no kitt.toml)'
 
-  const checked = await check($)
-
-  if (checked === null) return { result: '`kitt check` could not be started. Nothing was pushed.' }
-  if (checked.exitCode !== 0) return { result: `\`kitt check\` failed. Nothing was pushed. Output:\n${tail(checked, 40)}` }
+  if (checked === null) return { result: '`kitt check` could not be started.\nNothing was pushed.' }
+  if (checked.exitCode !== 0) return { result: `\`kitt check\` failed.\nNothing was pushed. Output:\n${tail(checked, 40)}` }
   if (git.behind > 0 && git.conflicts?.length !== 0) {
-    return { result: `The checks passed. The branch is ${git.behind} behind ${git.base} and the rebase does not look clean. Nothing was pushed.` }
+    return { result: `The branch is ${git.behind} behind ${git.base} and the rebase has conflicts.\nNothing was pushed (${checks}).` }
   }
 
-  await update($, doing, () => (git.behind > 0 ? 'checks passed · rebasing and pushing' : 'checks passed · pushing'))
+  await update($, doing, () => (git.behind > 0 ? 'rebasing and pushing' : 'pushing'))
 
   const pushed = git.behind > 0 ? await rebaseTool($) : await pushTool($, {})
 
@@ -747,19 +773,20 @@ async function shipKey($: EngineInterface): Promise<Answer> {
   await update($, doing, () => 'pushed · writing the PR')
   const pr = await write(
     $,
-    `${WRITE.pr}\n\nBranch ${git.branch} onto ${onto}.\n\nCommits:\n${commits.slice(0, MOST)}\n\nFiles:\n${stat}` +
+    'PR text',
+    `${WRITE.pr}\n\nBranch ${git.branch} onto ${onto}.\n\nChecks: ${checks}. Say of the checks only this.\n\nCommits:\n${commits.slice(0, MOST)}\n\nFiles:\n${stat}` +
       (proof === null || proof === '' ? '' : `\n\nkitt proof status:\n${proof}`),
   )
 
-  if ('result' in pr) return { result: `The checks passed and the branch is pushed; no PR was opened. ${pr.result}` }
+  if ('result' in pr) return { result: `${pr.result}\nThe branch is pushed (${checks}); no PR was opened.` }
 
   const opened = await run($, ['gh', 'pr', 'create', '--base', onto, '--head', git.branch, '--title', pr.head, '--body', pr.rest], 60_000)
 
   await refreshPr($)
 
   return opened?.exitCode === 0
-    ? { result: `Checks passed, pushed, PR opened: ${opened.stdout.trim().split(/\r?\n/).pop() ?? ''}`, isDone: true }
-    : { result: `The checks passed and the branch is pushed, but \`gh pr create\` failed: ${why(opened)}` }
+    ? { result: `Pushed and PR opened, ${checks}: ${opened.stdout.trim().split(/\r?\n/).pop() ?? ''}`, isDone: true }
+    : { result: `The PR could not be opened: ${ghSaid(opened)}\nThe branch is pushed (${checks}). gh said: ${why(opened)}` }
 }
 
 /** Leaves a merged branch for the default one, brought up to the remote's tip. */
@@ -942,7 +969,7 @@ export const register: Register = (on, options) => {
 
     if (how === null) return next(e)
 
-    const before = stopped === null ? [] : [`The key ran the fixed steps itself first and stopped here:\n${stopped}`]
+    const before = stopped === null ? [] : [`${TRIED}\n\nWhy it failed:\n${stopped}`]
 
     stopped = null
 
@@ -994,14 +1021,12 @@ export const register: Register = (on, options) => {
         )}
         {halt !== null && (
           <Box flexDirection="column">
-            <Text color="red" wrap="truncate-end">✗ {halt.key} stopped</Text>
-            {halt.why.split(/\r?\n/).filter(Boolean).slice(0, 2).map(line => (
-              <Text dimColor wrap="truncate-end">  {line}</Text>
-            ))}
+            <Text color="red" wrap="truncate-end">
+              ✗ {halt.key} failed · {halt.why.split(/\r?\n/).find(line => line.trim() !== '')?.trim() ?? ''}
+            </Text>
             <Box columnGap={2} marginLeft={2}>
-              <Button key="show" plain hotkey="s" label="Show all" onPress={() => show($, `${halt.key} stopped`)} />
-              <Button key="ask" plain hotkey="a" label="Hand to Claude" onPress={() => handOver($, halt)} />
-              <Button key="hide-halt" plain dimColor hotkey="d" label="Dismiss" onPress={() => update($, halted, () => null)} />
+              <Button key="resolve" plain hotkey="r" label="Resolve with Claude" onPress={() => resolve($, halt)} />
+              <Button key="cancel" plain dimColor hotkey="n" label="Cancel" onPress={() => update($, halted, () => null)} />
             </Box>
           </Box>
         )}
@@ -1137,11 +1162,15 @@ export const register: Register = (on, options) => {
               plain
               hotkey="b"
               label="Rebase & push"
-              onPress={() =>
-                dirty === 0 && git.conflicts !== null && files.length === 0
-                  ? act($, 'The person pressed Rebase & push', () => rebaseTool($), rebaseAsk(git.base))
-                  : void $.prompt.submit({ text: rebaseAsk(git.base), asUser: true })
-              }
+              onPress={() => {
+                if (dirty === 0 && git.conflicts !== null && files.length === 0) {
+                  return act($, 'The person pressed Rebase & push', () => rebaseTool($), rebaseAsk(git.base))
+                }
+                // Which side wins differs every time: this one is Claude's from the start.
+                if (files.length > 0) $.ui.log(`Rebase & push: conflicts likely in ${files.join(', ')}; Claude rebases by hand`)
+
+                return void $.prompt.submit({ text: rebaseAsk(git.base), asUser: true })
+              }}
             />
             <Button key="hide-rebase" plain dimColor hotkey="h" label="Hide" onPress={() => update($, hiddenRebase, () => git.baseSha)} />
           </Box>
@@ -1162,14 +1191,14 @@ export const register: Register = (on, options) => {
     // A key that stopped: its reason whole, every line wrapped, none cut.
     const stop = halt !== null && (
       <Box flexDirection="column">
-        <Text bold color="red">✗ {halt.key} stopped</Text>
+        <Text bold color="red">✗ {halt.key} failed</Text>
         {halt.why.split(/\r?\n/).map(line => (
           <Text>{line === '' ? ' ' : line}</Text>
         ))}
         <Text> </Text>
         <Box columnGap={2}>
-          <Button key="ask" plain hotkey="a" label="Hand to Claude" onPress={() => handOver($, halt)} />
-          <Button key="hide-halt" plain dimColor hotkey="d" label="Dismiss" onPress={() => update($, halted, () => null)} />
+          <Button key="resolve" plain hotkey="r" label="Resolve with Claude" onPress={() => resolve($, halt)} />
+          <Button key="cancel" plain dimColor hotkey="n" label="Cancel" onPress={() => update($, halted, () => null)} />
         </Box>
         <Text> </Text>
       </Box>

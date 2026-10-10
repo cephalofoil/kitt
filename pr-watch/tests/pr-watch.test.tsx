@@ -137,6 +137,7 @@ test('with nothing to decide, Push and Rebase run git themselves and send no pro
 test('Push & open PR runs the checks, pushes and opens the PR a fork wrote', async ($, on) => {
   const ran: string[] = []
   const sent: string[] = []
+  let hasKitt = true
 
   on('process.run', (_, e) => {
     ran.push(e.argv.join(' '))
@@ -148,7 +149,7 @@ test('Push & open PR runs the checks, pushes and opens the PR a fork wrote', asy
   on('ui.toast', () => ({ value: undefined }) as never)
   on('clock.now', () => ({ value: Date.parse('2026-10-03T20:05:00Z') }) as never)
   on('ui.render', () => h('Box', {}) as never)
-  on('fs.read', () => ({ value: '' }) as never)
+  on('fs.read', () => (hasKitt ? { value: '' } : { deny: 'ENOENT: no such file' }) as never)
   on('process.spawn', async function* (_, e) {
     ran.push(e.argv.join(' '))
     yield { stream: 'stdout' as const, text: 'lint ok\n' }
@@ -180,6 +181,13 @@ test('Push & open PR runs the checks, pushes and opens the PR a fork wrote', asy
   expect(ran).toContain('git rebase origin/main')
   expect(ran).toContain('gh pr create --base main --head agent/feature --title fix(mobile): wrap long steps --body Closes #317')
   expect(ran.indexOf('kitt check')).toBeLessThan(ran.indexOf('git rebase origin/main'))
+  expect(sent).toEqual([])
+
+  // A repo without a kitt.toml has no checks a key could run: the PR is opened all the same.
+  hasKitt = false
+  await band.press({ key: 'push' })
+  expect(ran.filter(one => one === 'kitt check')).toHaveLength(1)
+  expect(ran.filter(one => one.startsWith('gh pr create'))).toHaveLength(2)
   expect(sent).toEqual([])
   await band.unmount()
 })
@@ -248,30 +256,36 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(sent).toEqual([])
     hasAnswered = true
 
-    // A fork that finds something to decide stops the key: the band says why, and no prompt goes out by itself.
+    // A fork that finds something to decide stops the key: the band says so in one line, and nothing is sent.
     written = 'ASK: a.ts and c.ts are unrelated changes'
     await band.press({ key: 'commit' })
-    expect(sent).toEqual([])
-    expect(await band.find({ type: 'Text', text: /Commit stopped/ })).toBeDefined()
+    expect(await band.find({ type: 'Text', text: /Commit failed/ })).toBeDefined()
     expect(await band.find({ type: 'Text', text: /a\.ts and c\.ts are unrelated changes/ })).toBeDefined()
+    expect(sent).toEqual([])
 
-    // The pane shows the reason whole, with the same two keys.
+    // The pane keeps the reason whole, with the same two keys.
     const stop = await $.ui.mount({
       plugin: 'pr-watch',
       surface,
       component: 'Pane',
       requestId: 'pr-watch',
-      props: { title: 'Commit stopped', isFocused: true, bodyColumns: 80, placement: 'inline' } as never,
+      props: { title: 'Commit failed', isFocused: true, bodyColumns: 80, placement: 'inline' } as never,
     })
 
-    expect(await stop.find({ type: 'Text', text: /Commit stopped/ })).toBeDefined()
     expect(await stop.find({ type: 'Text', text: 'a.ts and c.ts are unrelated changes' })).toBeDefined()
-    expect(await stop.find({ type: 'Button', key: 'ask' })).toBeDefined()
+    expect(await stop.find({ type: 'Button', key: 'resolve' })).toBeDefined()
     await stop.unmount()
 
-    await band.press({ key: 'ask' })
-    expect(sent.at(-1)).toBe('Commit my changes.')
-    expect(await band.find({ type: 'Text', text: /Commit stopped/ })).toBeUndefined()
+    // Cancel takes the line away and sends nothing.
+    await band.press({ key: 'cancel' })
+    expect(await band.find({ type: 'Text', text: /Commit failed/ })).toBeUndefined()
+    expect(sent).toEqual([])
+
+    // Resolve with Claude sends the key's own few words; the reason rides along unseen.
+    await band.press({ key: 'commit' })
+    await band.press({ key: 'resolve' })
+    expect(sent).toEqual(['Commit my changes.'])
+    expect(await band.find({ type: 'Text', text: /Commit failed/ })).toBeUndefined()
 
     await band.press({ key: 'rebase' })
     expect(sent.at(-1)).toBe('Rebase this branch onto main and push the branch.')
