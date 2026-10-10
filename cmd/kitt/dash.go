@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // The dashboard: one row per lane, the few facts that decide what to do next,
@@ -44,12 +46,24 @@ type dash struct {
 	noteAt time.Time
 	busy   string
 
-	// mode is "", "new", "remove" or "force".
+	// mode is "", "new", "how", "prompt", "phone", "remove" or "force".
 	mode  string
 	input string
+	// phone is what the phone window shows: the lane, and how a phone loads it.
+	phone phoneMsg
+	// A lane is opened in steps: which one (pending, under a title that says
+	// whether it is made or gone into), how it opens (choice, an index into
+	// openings), and where the agent is to be told something, the prompt.
+	pending  string
+	title    string
+	openings []opening
+	choice   int
 	// held is the lane a refused removal named, and why it was refused.
 	held   string
 	reason string
+
+	// backlog is a repo's open issues, shown in place of the lanes while it is open.
+	backlog backlog
 }
 
 type (
@@ -59,6 +73,12 @@ type (
 		prs   []prRow
 	}
 	doneMsg string
+	// phoneMsg is a lane's phone Metro, started: the link a phone opens, and what may keep it from working.
+	phoneMsg struct {
+		lane  string
+		link  string
+		notes []string
+	}
 )
 
 func cmdDash(args []string) error {
@@ -139,6 +159,30 @@ func self(args ...string) tea.Cmd {
 	}
 }
 
+// phoneFor starts a lane's phone Metro, as its own process like the rest, and
+// brings back the link its last line names.
+func phoneFor(name, target string) tea.Cmd {
+	return func() tea.Msg {
+		exe, _ := os.Executable()
+		out, err := exec.Command(exe, "phone", target, "--link").CombinedOutput()
+		lines := strings.Split(strings.TrimSpace(strings.ReplaceAll(string(out), "\r", "")), "\n")
+		last := lines[len(lines)-1]
+		if err != nil {
+			if last == "" {
+				last = err.Error()
+			}
+			return doneMsg(last)
+		}
+		msg := phoneMsg{lane: name, link: last}
+		for _, line := range lines[:len(lines)-1] {
+			if note, ok := strings.CutPrefix(strings.TrimSpace(line), "note"); ok {
+				msg.notes = append(msg.notes, strings.TrimSpace(note))
+			}
+		}
+		return msg
+	}
+}
+
 func (d dash) visible() []LaneView {
 	var rows []LaneView
 	for _, row := range d.rows {
@@ -165,6 +209,13 @@ func (d dash) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return d, nil
 
+	case issuesMsg:
+		if msg.repo == d.backlog.repo {
+			d.backlog.issues, d.backlog.failed, d.backlog.loaded = msg.issues, msg.failed, true
+			d.backlog.cursor = min(d.backlog.cursor, max(0, len(d.shownIssues())-1))
+		}
+		return d, nil
+
 	case doneMsg:
 		d.busy, d.note, d.noteAt = "", string(msg), time.Now()
 		// A removal kitt refused holds unsaved work: ask a second time, differently.
@@ -175,9 +226,21 @@ func (d dash) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return d, load
 
+	case phoneMsg:
+		d.busy, d.mode, d.phone = "", "phone", msg
+		return d, load
+
 	case tea.KeyMsg:
+		if d.mode == "phone" {
+			// Any key closes the window: the Metro behind it keeps running.
+			d.mode = ""
+			return d, nil
+		}
 		if d.mode != "" {
 			return d.typed(msg)
+		}
+		if d.backlog.open {
+			return d.backlogKey(msg)
 		}
 		return d.pressed(msg)
 	}
@@ -213,6 +276,8 @@ func (d dash) pressed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		d.cursor = 0
 	case "n":
 		d.mode, d.input = "new", ""
+	case "b":
+		return d.openBacklog(d.repoAtCursor())
 	}
 	// An open pull request: enter checks it out as a lane, o shows it on GitHub.
 	if at := d.cursor - len(rows); row == nil && at >= 0 && at < len(d.prs) {
@@ -235,7 +300,7 @@ func (d dash) pressed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				return doneMsg("opened PR #" + number)
 			}
-		case "e", "g", "i", "u", "d", "c", "p", "a", "x":
+		case "e", "g", "h", "i", "u", "d", "c", "p", "a", "x":
 			return say("PR #" + number + " has no lane yet: enter checks it out")
 		}
 		return d, nil
@@ -250,8 +315,10 @@ func (d dash) pressed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !row.Managed {
 			return say(row.Name + " is not a lane yet: press a to adopt it")
 		}
-		// Its own process: an install it has to run first must not write over this screen.
-		return start("opening "+row.Name, "focus", target)
+		// How it opens is asked first, by what the lane has running already.
+		d.mode, d.pending, d.title = "how", row.Name, "open "
+		d.openings, d.choice = laneOpenings(*row, loadRepoConfig(row.Main, row.Path))
+		return d, nil
 	case "e":
 		lane := row.Lane
 		d.busy = "emulator → " + row.Name
@@ -282,6 +349,12 @@ func (d dash) pressed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return say(row.Name + " is not a lane yet: press a to adopt it")
 		}
 		return start("installing "+row.Name, "setup", target)
+	case "h":
+		if !row.Managed {
+			return say(row.Name + " is not a lane yet: press a to adopt it")
+		}
+		d.busy = "phone → " + row.Name + " (starting its Metro)"
+		return d, phoneFor(row.Name, target)
 	case "u":
 		return start("starting dev servers of "+row.Name, "up", target)
 	case "d":
@@ -309,40 +382,43 @@ func (d dash) pressed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (d dash) typed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	rows := d.visible()
-	repo := ""
-	if d.cursor < len(rows) {
-		repo = rows[d.cursor].Repo
-	} else if at := d.cursor - len(rows); at >= 0 && at < len(d.prs) {
-		repo = d.prs[at].Repo
-	} else if repos := loadGlobal().Repos; len(repos) > 0 {
-		repo = repos[0].Name
-	}
+	repo := d.repoAtCursor()
 
 	switch msg.Type {
 	case tea.KeyEsc, tea.KeyCtrlC:
 		d.mode = ""
 		return d, nil
 
+	case tea.KeyUp, tea.KeyDown:
+		if d.mode == "how" {
+			step := 1
+			if msg.Type == tea.KeyUp {
+				step = -1
+			}
+			d.choice = min(len(d.openings)-1, max(0, d.choice+step))
+		}
+		return d, nil
+
 	case tea.KeyEnter:
 		mode, input := d.mode, strings.TrimSpace(d.input)
 		d.mode = ""
-		if mode == "remove" || mode == "force" || input == "" {
+		if mode == "remove" || mode == "force" || (input == "" && mode != "how") {
 			d.held = ""
 			return d, nil
 		}
-		// "412 web admin": an issue, then the apps the lane is about.
-		args := []string{"new", input, "--repo", repo}
-		if words := strings.Fields(input); len(words) > 1 && isNumber(words[0]) {
-			args = []string{"new", words[0], "--repo", repo, "--apps", strings.Join(words[1:], ",")}
+		switch mode {
+		case "new":
+			// What the lane is, is typed: how it opens is asked next.
+			d.mode, d.pending, d.title = "how", input, "new lane "
+			d.openings, d.choice = newOpenings(input, repo)
+			return d, nil
+		case "how":
+			return d.open()
 		}
-		if mode == "new-agent" {
-			args = append(args, "--agent")
-		}
-		d.busy = "creating lane " + input
-		return d, self(args...)
+		return d.create(input)
 
 	case tea.KeyBackspace:
-		if r := []rune(d.input); len(r) > 0 {
+		if r := []rune(d.input); len(r) > 0 && d.mode != "how" {
 			d.input = string(r[:len(r)-1])
 		}
 		return d, nil
@@ -366,9 +442,140 @@ func (d dash) typed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return d, nil
 		}
+		if d.mode == "how" {
+			switch key := msg.String(); key {
+			case "k":
+				d.choice = max(0, d.choice-1)
+			case "j":
+				d.choice = min(len(d.openings)-1, d.choice+1)
+			default:
+				// A digit names an opening and takes it.
+				if at := int(key[0] - '1'); len(key) == 1 && at >= 0 && at < len(d.openings) {
+					d.choice = at
+					return d.open()
+				}
+			}
+			return d, nil
+		}
 		d.input += msg.String()
 	}
 	return d, nil
+}
+
+// opening is one way a lane opens: what the dialog says of it, the kitt call
+// behind it, and whether a prompt for the agent is typed first.
+type opening struct {
+	label string
+	hint  string
+	args  []string
+	ask   bool
+}
+
+// newArgs is the `kitt new` call for what was typed, and whether it names an
+// issue. "412 web admin" is an issue, then the apps the lane is about.
+func newArgs(input, repo string) ([]string, bool) {
+	words := strings.Fields(input)
+	issue := len(words) > 0 && isNumber(words[0])
+	if issue && len(words) > 1 {
+		return []string{"new", words[0], "--repo", repo, "--apps", strings.Join(words[1:], ",")}, true
+	}
+	return []string{"new", input, "--repo", repo}, issue
+}
+
+// issueHint says what an agent put on an issue is told to reach.
+const issueHint = "it reads the issue, builds it, proves it in the app and opens the PR; the dev servers start"
+
+// newOpenings are the ways a lane that is yet to be made opens, and the one
+// the dialog starts on: an issue is its own prompt, a name is a session.
+func newOpenings(input, repo string) ([]opening, int) {
+	args, issue := newArgs(input, repo)
+	with := func(more ...string) []string { return append(append([]string{}, args...), more...) }
+	list := []opening{
+		{"a blank Claude", "the lane and an agent to talk to, no dev servers started", with("--blank", "--focus"), false},
+		{"a blank Claude and the dev servers", "the same, with the lane's apps started on its ports", with("--blank", "--up", "--focus"), false},
+	}
+	if issue {
+		return append(list, opening{"Claude on the issue, through to a pull request", issueHint, with("--up"), false}), 2
+	}
+	return append(list, opening{"Claude with a prompt and the dev servers", "you type what Claude is to do next, then it starts by itself", with("--up"), true}), 1
+}
+
+// laneOpenings are the ways a lane that exists opens, by what is in it
+// already: a workspace to go to, an agent at work, dev servers of its own.
+// The dialog starts on the least of them that takes the person there.
+func laneOpenings(row LaneView, cfg RepoConfig) ([]opening, int) {
+	focus := func(more ...string) []string {
+		return append([]string{"focus", row.Repo + "/" + row.Name}, more...)
+	}
+	agent := row.AgentPane != ""
+	issue := row.State != nil && row.State.Issue > 0
+	// What runs for every lane (a database) is not this lane's to restart.
+	var running []string
+	for _, name := range row.Up {
+		if app := cfg.app(name); app != nil && !app.Shared {
+			running = append(running, name)
+		}
+	}
+
+	var list []opening
+	chosen := 0
+	if row.Workspace != "" {
+		list = append(list, opening{"go to it", "its workspace as it is: nothing is started", focus("--no-up"), false})
+	}
+	if !agent && len(running) == 0 {
+		if row.Workspace == "" {
+			chosen = len(list)
+		}
+		list = append(list, opening{"a blank Claude and the dev servers", "an agent to talk to, its apps started on its ports, its app in the emulator", focus("--blank"), false})
+	}
+
+	if agent {
+		list = append(list, opening{"a new Claude", "one more agent, in a tab of its own: the one at work stays", focus("--new-agent", "--no-up"), false})
+	} else {
+		list = append(list, opening{"a blank Claude", "an agent to talk to, no dev servers started", focus("--blank", "--no-up"), false})
+	}
+	if len(running) > 0 {
+		list = append(list, opening{"restart the dev servers", "stopped and started again: " + strings.Join(running, ", "), focus("--restart"), false})
+	} else {
+		list = append(list, opening{"the dev servers", "its apps started on its ports, its app in the emulator", focus(), false})
+	}
+
+	switch {
+	case agent:
+		list = append(list, opening{"tell Claude something", "you type it next: it goes to the agent at work", focus("--no-up"), true})
+	case issue:
+		list = append(list, opening{"Claude on the issue, through to a pull request", issueHint, focus("--agent"), false})
+	default:
+		list = append(list, opening{"Claude with a prompt and the dev servers", "you type what Claude is to do next, then it starts by itself", focus(), true})
+	}
+	return list, chosen
+}
+
+// open acts on the choice made in the dialog: where the agent is to be told
+// something, that is asked for first.
+func (d dash) open() (tea.Model, tea.Cmd) {
+	if d.choice < len(d.openings) && d.openings[d.choice].ask {
+		d.mode, d.input = "prompt", ""
+		return d, nil
+	}
+	return d.create("")
+}
+
+// create opens the pending lane the way it was chosen, as its own process: an
+// install it has to run first must not write over this screen.
+func (d dash) create(prompt string) (tea.Model, tea.Cmd) {
+	d.mode = ""
+	if d.choice >= len(d.openings) {
+		return d, nil
+	}
+	// Back to the lanes: the one this opens or makes shows there.
+	d.backlog.open = false
+	args := append([]string{}, d.openings[d.choice].args...)
+	if prompt != "" {
+		args = append(args, "--prompt", prompt)
+	}
+	d.busy = d.title + d.pending
+	return d, self(args...)
 }
 
 func cut(s string, width int) string {
@@ -389,6 +596,13 @@ func (d dash) View() string {
 	width := d.width
 	if width <= 0 {
 		width = 100
+	}
+	if d.backlog.open {
+		screen := d.backlogView(width)
+		if d.mode == "how" {
+			return overlay(screen, d.dialog(width), width, d.height)
+		}
+		return screen
 	}
 	rows := d.visible()
 
@@ -503,13 +717,19 @@ func (d dash) View() string {
 	}
 
 	b.WriteString("\n")
+	// A window lies over the lanes, which stay to be seen behind it.
+	window := ""
 	switch {
-	case d.mode == "new" || d.mode == "new-agent":
-		what := "new lane"
-		if d.mode == "new-agent" {
-			what = "new lane with an agent"
-		}
-		b.WriteString("  " + accent.Render(what) + dim.Render(" · issue number (plus apps, like \"412 web\") or a name: ") + d.input + "▏\n")
+	case d.mode == "how":
+		window = d.dialog(width)
+		b.WriteString("\n")
+	case d.mode == "phone":
+		window = d.phoneWindow(width, d.height)
+		b.WriteString("\n")
+	case d.mode == "new":
+		b.WriteString("  " + accent.Render("new lane") + dim.Render(" · issue number (plus apps, like \"412 web\") or a name for a session without a ticket: ") + d.input + "▏\n")
+	case d.mode == "prompt":
+		b.WriteString("  " + accent.Render(d.title+d.pending) + dim.Render(" · what Claude is to do: ") + d.input + "▏\n")
 	case d.mode == "remove" && d.cursor < len(rows):
 		b.WriteString("  " + red.Render("remove "+rows[d.cursor].Name+"?") + dim.Render(" y removes the worktree · any other key keeps it") + "\n")
 	case d.mode == "force":
@@ -523,14 +743,86 @@ func (d dash) View() string {
 	}
 	b.WriteString("\n" + legend(width))
 
+	if window != "" {
+		return overlay(b.String(), window, width, d.height)
+	}
 	return b.String()
+}
+
+// overlay lays a window over the middle of a screen. Each line of the screen
+// keeps what is left and right of the window, colours included.
+func overlay(screen, window string, width, height int) string {
+	lines := strings.Split(screen, "\n")
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	over := strings.Split(window, "\n")
+	for len(lines) < len(over) {
+		lines = append(lines, "")
+	}
+	wide := lipgloss.Width(window)
+	left, top := max(0, (width-wide)/2), (len(lines)-len(over))/2
+
+	const reset = "\x1b[0m"
+	for i, line := range over {
+		behind := lines[top+i]
+		before := ansi.Truncate(behind, left, "")
+		before += strings.Repeat(" ", left-lipgloss.Width(before))
+		// A line of the window may be shorter than the window is wide.
+		line += strings.Repeat(" ", wide-lipgloss.Width(line))
+		lines[top+i] = before + reset + line + reset + ansi.TruncateLeft(behind, left+wide, "")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// dialog asks how the pending lane opens.
+func (d dash) dialog(width int) string {
+	var b strings.Builder
+	b.WriteString(accent.Render(d.title) + bold.Render(d.pending) + "\n\n")
+	for i, opening := range d.openings {
+		pointer, line := "  ", fmt.Sprintf("%d  %s", i+1, opening.label)
+		if i == d.choice {
+			pointer, line = accent.Render("▸ "), bold.Render(line)
+		}
+		b.WriteString(pointer + line + "\n     " + dim.Render(opening.hint) + "\n")
+	}
+	b.WriteString("\n" + dim.Render(fmt.Sprintf("↑↓ or 1-%d · enter takes it · esc leaves it", len(d.openings))))
+	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("12")).
+		Padding(1, 3).MaxWidth(max(20, width-2)).Render(b.String())
+}
+
+// phoneWindow shows how a phone loads the lane: the code to scan, and the
+// address to type where the pane is too small for the code.
+func (d dash) phoneWindow(width, height int) string {
+	address := d.phone.link
+	if at := strings.Index(address, "url="); at >= 0 {
+		if plain, err := url.QueryUnescape(address[at+4:]); err == nil {
+			address = plain
+		}
+	}
+	var b strings.Builder
+	b.WriteString(accent.Render("phone → ") + bold.Render(d.phone.lane) + "\n\n")
+	code := qr(d.phone.link)
+	// The frame, the lines around the code and the notes take their share of the pane.
+	if lipgloss.Height(code)+10+len(d.phone.notes) <= height && lipgloss.Width(code)+8 <= width {
+		b.WriteString(code + "\n\n" + dim.Render("scan it with the phone's camera, or type into the dev client:") + "\n")
+	} else {
+		b.WriteString(dim.Render("this pane is too small for the code (kitt phone prints it). In the dev client, type:") + "\n")
+	}
+	b.WriteString(bold.Render(address) + "\n")
+	for _, note := range d.phone.notes {
+		b.WriteString(yellow.Render("! "+note) + "\n")
+	}
+	b.WriteString("\n" + dim.Render("the phone is on this machine's network · d stops it with the lane's servers · any key closes"))
+	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("12")).
+		Padding(1, 3).MaxWidth(max(20, width-2)).Render(b.String())
 }
 
 // legend lists every key, wrapped to the pane: a narrow split must not cut one off.
 func legend(width int) string {
 	keys := [][2]string{
-		{"enter", "open lane"}, {"e", "emulator"}, {"o", "browser"}, {"g", "agent"}, {"i", "install"}, {"u", "up"}, {"d", "down"}, {"c", "check"},
-		{"p", "proof"}, {"n", "new"}, {"a", "adopt"}, {"x", "remove"}, {"t", "all worktrees"}, {"q", "quit"},
+		{"enter", "open lane"}, {"e", "emulator"}, {"h", "phone"}, {"o", "browser"}, {"g", "agent"}, {"i", "install"}, {"u", "up"}, {"d", "down"}, {"c", "check"},
+		{"p", "proof"}, {"n", "new"}, {"b", "backlog"}, {"a", "adopt"}, {"x", "remove"}, {"t", "all worktrees"}, {"q", "quit"},
 	}
 	var b strings.Builder
 	line := 2

@@ -99,8 +99,8 @@ func cmdEmu(args []string) error {
 }
 
 // focus takes the person into a lane: its herdr workspace, its agent's pane
-// when it has one, and its app in the emulator.
-func focus(lane Lane, agentPane string) []string {
+// when it has one, and with servers, its dev servers and its app in the emulator.
+func focus(lane Lane, agentPane string, servers bool) []string {
 	var notes []string
 	if hasHerdr() {
 		if _, err := herdrOpen(lane, true); err != nil {
@@ -108,6 +108,9 @@ func focus(lane Lane, agentPane string) []string {
 		} else if agentPane != "" {
 			_ = herdr(nil, "agent", "focus", agentPane)
 		}
+	}
+	if !servers {
+		return notes
 	}
 	cfg := loadRepoConfig(lane.Main, lane.Path)
 	if lane.Managed && !lane.hasExpo(cfg) {
@@ -139,7 +142,7 @@ func focus(lane Lane, agentPane string) []string {
 }
 
 func cmdFocus(args []string) error {
-	rest, _ := flags(args)
+	rest, opts := flags(args, "agent", "blank", "new-agent", "no-up", "restart")
 	lane, err := findLane(strings.Join(rest, ""))
 	if err != nil {
 		return err
@@ -150,7 +153,65 @@ func cmdFocus(args []string) error {
 			pane = view.AgentPane
 		}
 	}
-	notes := focus(lane, pane)
+	var notes []string
+	cfg := loadRepoConfig(lane.Main, lane.Path)
+	if opts["agent"] != "" || opts["blank"] != "" || opts["new-agent"] != "" || opts["prompt"] != "" {
+		if !hasHerdr() {
+			return fail("an agent needs herdr")
+		}
+		// The person is taken there first: the agent takes a moment to start.
+		_, _ = herdrOpen(lane, true)
+		if opts["new-agent"] != "" {
+			pane, err = anotherAgent(lane, cfg)
+		} else {
+			pane, err = openAgent(lane, cfg)
+		}
+		if err != nil {
+			return err
+		}
+		prompt := opts["prompt"]
+		if opts["blank"] == "" && opts["new-agent"] == "" {
+			prompt = agentPrompt(lane, cfg, prompt)
+		}
+		if prompt != "" {
+			if err := herdr(nil, "agent", "prompt", pane, prompt); err != nil {
+				return err
+			}
+			notes = append(notes, "agent is on it")
+		}
+	}
+	if opts["restart"] != "" {
+		// What runs comes back, also an app that was started by name.
+		own := func() []string {
+			var names []string
+			for _, app := range cfg.Apps {
+				if !app.Shared && app.Dev != "" && listening(app.port(lane.Slot)) {
+					names = append(names, app.Name)
+				}
+			}
+			return names
+		}
+		running := own()
+		down(lane)
+		// A port is held a moment longer than the server that had it: what
+		// still answers would be taken for running and not started again.
+		for waited := 0; waited < 30 && len(own()) > 0; waited++ {
+			time.Sleep(500 * time.Millisecond)
+		}
+		if len(running) > 0 {
+			if _, err := up(lane, running, false); err != nil {
+				return err
+			}
+			// Going into the lane starts what its Metro lacks: it waits here, so it is not started twice.
+			if expo := cfg.expo(); expo != nil && strings.Contains(" "+strings.Join(running, " ")+" ", " "+expo.Name+" ") {
+				for waited := 0; waited < 90 && !listening(expo.port(lane.Slot)); waited += 2 {
+					time.Sleep(2 * time.Second)
+				}
+			}
+			notes = append(notes, "restarted "+strings.Join(running, ", "))
+		}
+	}
+	notes = append(notes, focus(lane, pane, opts["no-up"] == "")...)
 	if len(notes) == 0 {
 		notes = []string{"opened " + lane.Name}
 	}

@@ -13,15 +13,20 @@ const usage = `kitt — lanes for parallel work
   kitt dash [--workspace]        the dashboard (--workspace opens it as a herdr workspace)
   kitt new <issue|name>          a new lane: worktree, branch, linked env files, setup
         [--prompt t] [--no-agent]  an issue lane starts an agent on the issue; --prompt gives any lane one
+        [--blank] [--up]           a blank agent, whatever the lane is for · its dev servers started
         [--apps web,admin]         the apps the lane is about, when not the repo's usual ones
         [--repo r] [--base ref] [--focus] [--no-setup]
   kitt pr <number>               check an open pull request out as a lane, to look at it before the merge
   kitt agent [lane] [--prompt t] start the lane's agent, or hand the running one a prompt
   kitt ls [--all] [--json]       the lanes
+  kitt backlog [--repo r] [--json]  the repo's open issues, and which of them has a lane
   kitt focus [lane]              go into a lane: its herdr workspace, its dev servers, its app in the emulator
+        [--blank | --agent | --prompt t | --new-agent]  with a blank agent, one on its issue, one told t, or one more
+        [--no-up | --restart]      without the servers · with them stopped and started again
   kitt up [lane] [app...]        start the lane's dev servers on its own ports
   kitt down [lane]               stop them
   kitt emu [lane]                point the emulator at the lane's Metro
+  kitt phone [lane] [--host ip]  a second Metro for a phone on the Wi-Fi, told this machine's address; prints the code to scan
   kitt open [lane] [app]         open the lane's web app in the browser
   kitt env [lane]                the lane's ports
   kitt check [lane] [--all]      run the repo's checks for the apps the lane touched
@@ -52,8 +57,8 @@ func main() {
 		return
 	}
 	commands := map[string]func([]string) error{
-		"dash": cmdDash, "new": cmdNew, "ls": cmdLs, "list": cmdLs, "focus": cmdFocus, "up": cmdUp, "down": cmdDown,
-		"emu": cmdEmu, "env": cmdEnv, "check": cmdCheck, "proof": cmdProof, "adopt": cmdAdopt, "link": cmdLink,
+		"dash": cmdDash, "new": cmdNew, "backlog": cmdBacklog, "ls": cmdLs, "list": cmdLs, "focus": cmdFocus, "up": cmdUp, "down": cmdDown,
+		"emu": cmdEmu, "phone": cmdPhone, "env": cmdEnv, "check": cmdCheck, "proof": cmdProof, "adopt": cmdAdopt, "link": cmdLink,
 		"rm": cmdRm, "agent": cmdAgent, "logo": cmdLogo, "setup": cmdSetup, "pr": cmdPr, "open": cmdOpen, "detect": cmdDetect, "repo": cmdRepo, "init": cmdInit, "doctor": cmdDoctor,
 	}
 	command, ok := commands[os.Args[1]]
