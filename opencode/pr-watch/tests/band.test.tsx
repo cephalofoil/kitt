@@ -29,6 +29,8 @@ function host(answer: () => string) {
   const api = {
     state: { path: { directory: repo }, session: { status: () => undefined } },
     route: { current: { name: 'session', params: { sessionID: 's1' } } },
+    keys: { formatBindings: () => undefined },
+    tuiConfig: { keybinds: { get: () => [] } },
     theme: { current: new Proxy({}, { get: () => color }) },
     ui: {
       toast: () => {},
@@ -87,7 +89,7 @@ test('a commit by key: the message comes from a fork with no tools, the agent ge
   const render = await testRender(() => on.slots.session_prompt?.({}, { session_id: 's1' }) as never, { width: 100, height: 12 })
   const before = await shown(render, /1 uncommitted/)
 
-  expect(before).toContain('Commit leader i')
+  expect(before).toContain('Commit ctrl+x i')
   expect(before).toContain('PROMPT')
 
   on.commands.get('prwatch.commit')?.run()
@@ -120,7 +122,7 @@ test('a key that stops is one line with two keys; resolving sends its few words,
   const stopped = await shown(render, /Commit failed/)
 
   expect(stopped).toContain('✗ Commit failed · b.txt holds what looks like a token.')
-  expect(stopped).toContain('Resolve with the agent leader f')
+  expect(stopped).toContain('Resolve ctrl+x f')
   expect(git('status', '--porcelain')).toBe('?? b.txt')
   expect(on.turns).toEqual([])
 

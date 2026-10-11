@@ -2,7 +2,7 @@
 import { join } from 'node:path'
 
 import type { TuiPlugin, TuiPluginModule } from '@opencode-ai/plugin/tui'
-import { createMemo, createSignal, For, Show } from 'solid-js'
+import { createMemo, createSignal, For, type JSX, Show } from 'solid-js'
 
 import { duration, headline, overall } from '../../pr-watch/hooks/parse'
 import type { PrWatchGit, PrWatchSnapshot } from '../../pr-watch/types'
@@ -524,36 +524,70 @@ const tui: TuiPlugin = async (api, options) => {
 
   // --- The pieces the band and the full view are made of ----------------------
 
+  // The leader as the host writes it (`ctrl+x`), so a hint reads as what is pressed.
+  const leader = (() => {
+    try {
+      return api.keys.formatBindings(api.tuiConfig.keybinds.get('leader') as never) || 'ctrl+x'
+    } catch {
+      return 'ctrl+x'
+    }
+  })()
+
   const hint = (command: string): string => {
     const key = keys[command]
 
-    return key === undefined || key === 'none' ? '' : ` ${key.replace('<leader>', 'leader ')}`
+    return key === undefined || key === 'none' ? '' : ` ${key.replace('<leader>', `${leader} `)}`
   }
 
-  const Key = (props: { label: string; command?: string; dim?: boolean; run: () => unknown }) => (
-    <box flexShrink={0} onMouseUp={() => void props.run()}>
-      <text fg={props.dim ? theme().textMuted : theme().accent}>
-        {props.label}
-        <span style={{ fg: theme().textMuted }}>{props.command === undefined ? '' : hint(props.command)}</span>
-      </text>
+  /** A key of the band: a chip that lights up under the mouse, with its chord dim beside the label. */
+  const Key = (props: { label: string; command?: string; dim?: boolean; run: () => unknown }) => {
+    const [isOver, setOver] = createSignal(false)
+
+    return (
+      <box
+        flexShrink={0}
+        paddingLeft={1}
+        paddingRight={1}
+        backgroundColor={isOver() ? theme().primary : theme().backgroundElement}
+        onMouseOver={() => setOver(true)}
+        onMouseOut={() => setOver(false)}
+        onMouseUp={() => void props.run()}
+      >
+        <text fg={isOver() ? theme().selectedListItemText : props.dim ? theme().textMuted : theme().text}>
+          {props.dim ? props.label : <b>{props.label}</b>}
+          <span style={{ fg: isOver() ? theme().selectedListItemText : theme().textMuted }}>
+            {props.command === undefined ? '' : hint(props.command)}
+          </span>
+        </text>
+      </box>
+    )
+  }
+
+  /** One line of the band: what is the case on the left, its keys in a column on the right. */
+  const Row = (props: { children: JSX.Element; keys: JSX.Element }) => (
+    <box flexDirection="row" justifyContent="space-between" gap={2}>
+      <box flexShrink={1} minWidth={0}>{props.children}</box>
+      <box flexDirection="row" flexShrink={0} gap={1}>{props.keys}</box>
     </box>
   )
 
-  const Stopped = (props: { halt: Halt; isWhole?: boolean }) => (
-    <box flexDirection="column">
-      <text fg={theme().error} wrapMode={props.isWhole ? 'word' : 'none'} truncate={!props.isWhole}>
-        ✗ {props.halt.key} failed
-        {props.isWhole ? `\n${props.halt.why}` : ` · ${props.halt.why.split(/\r?\n/).find(line => line.trim() !== '')?.trim() ?? ''}`}
+  const StopKeys = () => (
+    <>
+      <Key label="Resolve" command="prwatch.resolve" run={resolve} />
+      <Key label="Cancel" command="prwatch.cancel" dim run={() => setHalted(null)} />
+    </>
+  )
+
+  const Stopped = (props: { halt: Halt }) => (
+    <Row keys={<StopKeys />}>
+      <text fg={theme().error} wrapMode="none" truncate>
+        ✗ {props.halt.key} failed · {props.halt.why.split(/\r?\n/).find(line => line.trim() !== '')?.trim() ?? ''}
       </text>
-      <box flexDirection="row" gap={2} marginLeft={2}>
-        <Key label="Resolve with the agent" command="prwatch.resolve" run={resolve} />
-        <Key label="Cancel" command="prwatch.cancel" dim run={() => setHalted(null)} />
-      </box>
-    </box>
+    </Row>
   )
 
   const PrKeys = (props: { hasHide?: boolean }) => (
-    <box flexDirection="row" gap={2} marginLeft={2}>
+    <>
       <Show when={view().failed.length > 0}>
         <Key label="Retry failed" run={retry} />
         <Key label="Hand log to the agent" run={hand} />
@@ -562,7 +596,7 @@ const tui: TuiPlugin = async (api, options) => {
       <Show when={props.hasHide}>
         <Key label="Hide" dim run={() => setHiddenPr(keyOf(pr() as PrWatchSnapshot))} />
       </Show>
-    </box>
+    </>
   )
 
   const Band = () => (
@@ -577,15 +611,17 @@ const tui: TuiPlugin = async (api, options) => {
 
           return (
             <box flexDirection="column">
-              <text wrapMode="none" truncate>
-                <span style={{ fg: theme()[head().color], bold: true }}>
-                  {head().mark} PR #{open().number}
-                </span>
-                <span style={{ fg: theme()[head().color] }}> {head().word}</span>
-                <span style={{ fg: theme().textMuted }}> · </span>
-                {issue() === null ? open().title : `#${issue()?.number} ${issue()?.title}`}
-                {(issue()?.total ?? 0) > 0 ? ` · ${issue()?.done}/${issue()?.total} done` : ''}
-              </text>
+              <Row keys={<PrKeys hasHide />}>
+                <text wrapMode="none" truncate>
+                  <span style={{ fg: theme()[head().color], bold: true }}>
+                    {head().mark} PR #{open().number}
+                  </span>
+                  <span style={{ fg: theme()[head().color] }}> {head().word}</span>
+                  <span style={{ fg: theme().textMuted }}> · </span>
+                  {issue() === null ? open().title : `#${issue()?.number} ${issue()?.title}`}
+                  {(issue()?.total ?? 0) > 0 ? ` · ${issue()?.done}/${issue()?.total} done` : ''}
+                </text>
+              </Row>
               <box flexDirection="row" flexWrap="wrap" columnGap={2} marginLeft={2}>
                 <For each={open().checks.filter(check => check.state !== 'skipped')}>
                   {check => (
@@ -626,15 +662,14 @@ const tui: TuiPlugin = async (api, options) => {
                   )
                 }}
               </For>
-              <PrKeys hasHide />
             </box>
           )
         }}
       </Show>
       <Show when={view().dirty > 0 ? git() : null}>
         {now => (
-          <box flexDirection="row" gap={1}>
-            <text>
+          <Row keys={<Key label="Commit" command="prwatch.commit" run={commit} />}>
+            <text wrapMode="none" truncate>
               <span style={{ fg: theme().info, bold: true }}>● {view().dirty} uncommitted</span>
               <span style={{ fg: theme().textMuted }}>
                 {' · '}
@@ -644,35 +679,36 @@ const tui: TuiPlugin = async (api, options) => {
                 {view().outgoing > 0 ? ` · ↑ ${view().outgoing} not pushed` : ''}
               </span>
             </text>
-            <Key label="Commit" command="prwatch.commit" run={commit} />
-          </box>
+          </Row>
         )}
       </Show>
       <Show when={view().hasPush}>
-        <box flexDirection="row" gap={1}>
-          <text>
+        <Row keys={<Key label={view().isOpen ? 'Push' : view().outgoing > 0 ? 'Push & open PR' : 'Open PR'} command="prwatch.push" run={push} />}>
+          <text wrapMode="none" truncate>
             <span style={{ fg: theme().info, bold: true }}>
               {view().outgoing > 0 ? `↑ ${plural(view().outgoing, 'commit')} not pushed` : '↑ pushed'}
             </span>
             <span style={{ fg: theme().textMuted }}>{view().isOpen ? '' : ' · no PR yet'}</span>
           </text>
-          <Key label={view().isOpen ? 'Push' : view().outgoing > 0 ? 'Push & open PR' : 'Open PR'} command="prwatch.push" run={push} />
-        </box>
+        </Row>
       </Show>
       <Show when={view().isDone ? git() : null}>
         {now => (
-          <box flexDirection="row" gap={1}>
-            <text>
+          <Row
+            keys={
+              <Show when={view().dirty === 0}>
+                <Key label={`Switch to ${short(now().base)}`} run={switchToBase} />
+              </Show>
+            }
+          >
+            <text wrapMode="none" truncate>
               <span style={{ fg: theme().secondary, bold: true }}>✓ PR #{pr()?.number} merged</span>
               <span style={{ fg: theme().textMuted }}>
                 {' · this branch is done'}
                 {view().dirty === 0 ? '' : ' · commit or stash first to switch'}
               </span>
             </text>
-            <Show when={view().dirty === 0}>
-              <Key label={`Switch to ${short(now().base)}`} run={switchToBase} />
-            </Show>
-          </box>
+          </Row>
         )}
       </Show>
       <Show when={view().hasRebase ? git() : null}>
@@ -680,7 +716,14 @@ const tui: TuiPlugin = async (api, options) => {
           const files = () => now().conflicts ?? []
 
           return (
-            <box flexDirection="row" gap={1}>
+            <Row
+              keys={
+                <>
+                  <Key label="Rebase & push" command="prwatch.rebase" run={rebase} />
+                  <Key label="Hide" dim run={() => setHiddenRebase(now().baseSha)} />
+                </>
+              }
+            >
               <text wrapMode="none" truncate>
                 <span style={{ fg: theme().warning, bold: true }}>
                   ↓ {now().behind} behind {short(now().base)}
@@ -696,9 +739,7 @@ const tui: TuiPlugin = async (api, options) => {
                         (files().length > 2 ? ', …' : '')}
                 </span>
               </text>
-              <Key label="Rebase & push" command="prwatch.rebase" run={rebase} />
-              <Key label="Hide" dim run={() => setHiddenRebase(now().baseSha)} />
-            </box>
+            </Row>
           )
         }}
       </Show>
@@ -709,7 +750,19 @@ const tui: TuiPlugin = async (api, options) => {
 
   const Full = () => (
     <box flexDirection="column" paddingLeft={2} paddingRight={2} paddingBottom={1}>
-      <Show when={halted()}>{halt => <Stopped halt={halt()} isWhole />}</Show>
+      <Show when={halted()}>
+        {halt => (
+          <box flexDirection="column" paddingBottom={1}>
+            <text fg={theme().error} wrapMode="word">
+              <b>✗ {halt().key} failed</b>
+              {`\n${halt().why}`}
+            </text>
+            <box flexDirection="row" gap={1}>
+              <StopKeys />
+            </box>
+          </box>
+        )}
+      </Show>
       <Show
         when={pr()}
         fallback={<text fg={theme().textMuted}>{isLoaded() ? 'This branch has no pull request.' : 'Looking for the pull request…'}</text>}
@@ -796,7 +849,7 @@ const tui: TuiPlugin = async (api, options) => {
                 </text>
               </Show>
               <text> </text>
-              <box flexDirection="row" gap={2}>
+              <box flexDirection="row" gap={1}>
                 <PrKeys />
                 <Key label="Refresh" run={refreshPr} />
               </box>

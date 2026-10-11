@@ -134,6 +134,43 @@ test('with nothing to decide, Push and Rebase run git themselves and send no pro
   await band.unmount()
 })
 
+test('a rebase that conflicts where the check saw none is remembered: the band names the files', async ($, on) => {
+  on('process.run', (_, e) => {
+    const line = e.argv.join(' ')
+    const out =
+      line === 'git rebase origin/main'
+        ? { exitCode: 1, stdout: '' }
+        : line.startsWith('git diff --name-only --diff-filter=U')
+          ? { exitCode: 0, stdout: 'src/a.tsx\nsrc/b.py\n' }
+          : clean(e.argv)
+
+    return { value: { stderr: '', isStdoutTruncated: false, isStderrTruncated: false, ...out } }
+  })
+  on('ui.open', () => ({ value: { isPlaced: true as const } }))
+  on('ui.log', () => ({ value: undefined }) as never)
+  on('clock.now', () => ({ value: Date.parse('2026-10-03T20:05:00Z') }) as never)
+  on('ui.render', () => h('Box', {}) as never)
+  on('tool.call', () => ({ result: '' }) as never)
+
+  await $.command.run({ command: 'pr-watch' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'git status' } as never)
+
+  const band = await $.ui.mount({
+    plugin: 'pr-watch',
+    surface: 'terminal',
+    component: 'AbovePrompt',
+    props: { hasSurvey: false, isWorking: false, maxRows: 12, bodyColumns: 120 } as never,
+  })
+
+  expect(await band.find({ type: 'Text', text: /rebase looks clean/ })).toBeDefined()
+
+  await band.press({ key: 'rebase' })
+
+  expect(await band.find({ type: 'Text', text: /Rebase & push failed/ })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: /conflicts likely in 2 files: a\.tsx, b\.py/ })).toBeDefined()
+  await band.unmount()
+})
+
 test('Push & open PR runs the checks, pushes and opens the PR a fork wrote', async ($, on) => {
   const ran: string[] = []
   const sent: string[] = []
