@@ -584,6 +584,8 @@ async function rebaseTool($: EngineInterface): Promise<Answer> {
 
     // Back to exactly where the branch was: nothing half-done is left behind.
     await run($, ['git', 'rebase', '--abort'])
+    // Merging the two tips can be clean where replaying commit by commit is not: what the rebase hit is what is known now.
+    tried = { key: `${git.head}:${(await text($, ['git', 'rev-parse', git.base])) ?? ''}`, conflicts: files.split(/\r?\n/).filter(Boolean) }
     await refreshGit($)
 
     return {
