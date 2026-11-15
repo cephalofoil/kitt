@@ -111,6 +111,18 @@ func phone(lane Lane, host string, printOnly bool) (phoneView, error) {
 	if port == 0 {
 		return phoneView{}, fail("no free port next to %s's %d", expo.Name, expo.port(lane.Slot))
 	}
+	var notes []string
+	if cfg.Stack.single() && !printOnly {
+		// A phone Metro is one of the lane's servers: the lane takes the stack, as with `kitt up`.
+		if err := needsHerdr(cfg); err != nil {
+			return phoneView{}, err
+		}
+		_, stopped, err := acquireStack(lane, cfg, "soft", "phone", 0, false)
+		if err != nil {
+			return phoneView{}, err
+		}
+		notes = stopped
+	}
 
 	// The same app on the phone's port: {port} in its dev line and its env follow.
 	app := *expo
@@ -121,7 +133,7 @@ func phone(lane Lane, host string, printOnly bool) (phoneView, error) {
 	env["REACT_NATIVE_PACKAGER_HOSTNAME"] = host
 	command := cfg.expand(app.Dev, app, lane)
 
-	view := phoneView{URL: fmt.Sprintf("http://%s:%d", host, port)}
+	view := phoneView{URL: fmt.Sprintf("http://%s:%d", host, port), Notes: notes}
 	view.Link = view.URL
 	if app.Scheme != "" {
 		view.Link = app.Scheme + "://expo-development-client/?url=" + url.QueryEscape(view.URL)
@@ -171,9 +183,9 @@ func phone(lane Lane, host string, printOnly bool) (phoneView, error) {
 		return view, err
 	}
 	_ = updateState(func(s *State) {
-		if entry := s.Lanes[lane.key()]; entry != nil {
-			entry.Phone = host
-		}
+		// Kept so a takeover can stop it where the dev tab stays.
+		entry := s.laneEntry(lane)
+		entry.Phone, entry.PhonePane = host, pane
 	})
 	for waited := 0; waited < 90 && !listening(port); waited += 2 {
 		time.Sleep(2 * time.Second)

@@ -224,7 +224,7 @@ func upApps(lane Lane, only []string, printOnly, force bool) (lines, restarted [
 				_ = herdr(nil, "pane", "close", last.Pane)
 			}
 			lines = append(lines, stopApps(lane, cfg, []App{app}, false)...)
-			lines = append(lines, freePort(app, port)...)
+			lines = append(lines, freePort(app.Name, port)...)
 			lines = append(lines, fmt.Sprintf("%-8s its config changed: restarting", app.Name))
 			restarted = append(restarted, app.Name)
 		}
@@ -277,12 +277,7 @@ func upApps(lane Lane, only []string, printOnly, force bool) (lines, restarted [
 // recordDev keeps how an app was started in the lane's state.
 func recordDev(lane Lane, app string, start DevStart) {
 	_ = updateState(func(s *State) {
-		entry := s.Lanes[lane.key()]
-		if entry == nil {
-			// The main checkout is a lane without an entry until something is kept for it.
-			entry = &LaneState{Repo: lane.Repo, Name: lane.Name, Path: lane.Path, Slot: lane.Slot, Created: time.Now()}
-			s.Lanes[lane.key()] = entry
-		}
+		entry := s.laneEntry(lane)
 		if entry.Dev == nil {
 			entry.Dev = map[string]DevStart{}
 		}
@@ -401,7 +396,10 @@ func down(lane Lane) []string {
 			apps = append(apps, app)
 		}
 	}
-	return stopApps(lane, cfg, apps, true)
+	lines := stopApps(lane, cfg, apps, true)
+	// The phone Metro ran in a dev tab too (devPane): it went with them.
+	forgetPhone(lane)
+	return lines
 }
 
 // stopApps runs the stop line of each app and, with closeTabs, closes the

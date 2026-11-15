@@ -271,7 +271,8 @@ func stackApps(cfg RepoConfig) []App {
 
 // stopStack stops a lane's stack apps and makes sure their ports are free. The
 // dev tab is closed when nothing kitt keeps running could live in it; else
-// each app's stop line and its port are what stop it.
+// each app's stop line and its port are what stop it. The lane's phone Metro
+// (kitt phone) is its Metro's twin and goes with it.
 func stopStack(lane Lane, cfg RepoConfig) []string {
 	apps := stackApps(cfg)
 	closeTab := true
@@ -286,15 +287,60 @@ func stopStack(lane Lane, cfg RepoConfig) []string {
 	}
 	lines := stopApps(lane, cfg, apps, closeTab)
 
-	for _, app := range apps {
-		lines = append(lines, freePort(app, app.port(lane.Slot))...)
+	entry := loadState().Lanes[lane.key()]
+	if entry != nil && entry.PhonePane != "" && !closeTab && stacksPhone(cfg, apps) {
+		// The dev tab stays for a kept app: the phone Metro's pane in it is closed by itself.
+		_ = herdr(nil, "pane", "close", entry.PhonePane)
 	}
+	for _, port := range stackPorts(lane, cfg, apps, entry) {
+		lines = append(lines, freePort(port.name, port.port)...)
+	}
+	forgetPhone(lane)
 	return lines
+}
+
+type namedPort struct {
+	name string
+	port int
+}
+
+// stackPorts are the ports a takeover makes sure are free: each stack app's in
+// the lane's slot, and its phone Metro's when it has had one.
+func stackPorts(lane Lane, cfg RepoConfig, apps []App, entry *LaneState) []namedPort {
+	var ports []namedPort
+	for _, app := range apps {
+		ports = append(ports, namedPort{app.Name, app.port(lane.Slot)})
+	}
+	if expo := cfg.expo(); expo != nil && entry != nil && (entry.Phone != "" || entry.PhonePane != "") && stacksPhone(cfg, apps) {
+		ports = append(ports, namedPort{expo.Name + " phone", phonePort(cfg, *expo, lane)})
+	}
+	return ports
+}
+
+// stacksPhone says whether the phone Metro is stopped with these apps: it is
+// the expo app's twin, kept or shared as that app is.
+func stacksPhone(cfg RepoConfig, apps []App) bool {
+	expo := cfg.expo()
+	for _, app := range apps {
+		if expo != nil && app.Name == expo.Name {
+			return true
+		}
+	}
+	return false
+}
+
+// forgetPhone drops the record of a lane's phone Metro once it is stopped.
+func forgetPhone(lane Lane) {
+	_ = updateState(func(s *State) {
+		if entry := s.Lanes[lane.key()]; entry != nil {
+			entry.Phone, entry.PhonePane = "", ""
+		}
+	})
 }
 
 // freePort waits up to ten seconds for an app's port to fall quiet, then kills
 // whatever still listens on it.
-func freePort(app App, port int) []string {
+func freePort(name string, port int) []string {
 	if port <= 0 {
 		return nil
 	}
@@ -306,14 +352,14 @@ func freePort(app App, port int) []string {
 	}
 	pids := listeners(port)
 	if len(pids) == 0 {
-		return []string{fmt.Sprintf("%-8s still on %d: stop it by hand", app.Name, port)}
+		return []string{fmt.Sprintf("%-8s still on %d: stop it by hand", name, port)}
 	}
 	for _, pid := range pids {
 		if p, err := os.FindProcess(pid); err == nil {
 			_ = p.Kill()
 		}
 	}
-	return []string{fmt.Sprintf("%-8s still on %d: killed %s", app.Name, port, joinInts(pids))}
+	return []string{fmt.Sprintf("%-8s still on %d: killed %s", name, port, joinInts(pids))}
 }
 
 // listeners are the pids listening on a port, as lsof sees them.

@@ -30,10 +30,12 @@ type LaneState struct {
 	Setup   []string  `json:"setup,omitempty"`
 	// Apps are the apps this lane is about; empty means the repo's usual ones.
 	Apps []string `json:"apps,omitempty"`
-	// Phone is the address of this machine the lane's phone Metro was started for.
-	Phone  string       `json:"phone,omitempty"`
-	Checks *CheckResult `json:"checks,omitempty"`
-	Proof  *ProofState  `json:"proof,omitempty"`
+	// Phone is the address of this machine the lane's phone Metro was started
+	// for, PhonePane the herdr pane it runs in.
+	Phone     string       `json:"phone,omitempty"`
+	PhonePane string       `json:"phone_pane,omitempty"`
+	Checks    *CheckResult `json:"checks,omitempty"`
+	Proof     *ProofState  `json:"proof,omitempty"`
 	// Dev is how each app's dev server was last started, by app name.
 	Dev map[string]DevStart `json:"dev,omitempty"`
 }
@@ -119,6 +121,19 @@ func locked(name string, fn func() error) error {
 	}
 	defer os.Remove(lock)
 	return fn()
+}
+
+// laneEntry is a lane's entry, made when it has none yet. The main checkout is
+// a lane without an entry until something is kept for it (a check, a proof, a
+// dev server); its entry has slot 0, which freeSlot never hands out, and
+// lanesOf keeps it the main checkout, named by its base branch.
+func (s *State) laneEntry(lane Lane) *LaneState {
+	entry := s.Lanes[lane.key()]
+	if entry == nil {
+		entry = &LaneState{Repo: lane.Repo, Name: lane.Name, Path: lane.Path, Slot: lane.Slot, Created: time.Now()}
+		s.Lanes[lane.key()] = entry
+	}
+	return entry
 }
 
 // freeSlot is the lowest slot above 0 no lane of the repo holds; slot 0 is the

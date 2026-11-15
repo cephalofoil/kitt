@@ -199,12 +199,7 @@ func proofBegin(lane Lane, opts map[string]string) error {
 		return err
 	}
 	if err := updateState(func(s *State) {
-		entry := s.Lanes[lane.key()]
-		if entry == nil {
-			// The main checkout is a lane without an entry until something is kept for it.
-			entry = &LaneState{Repo: lane.Repo, Name: lane.Name, Path: lane.Path, Slot: lane.Slot, Created: time.Now()}
-			s.Lanes[lane.key()] = entry
-		}
+		entry := s.laneEntry(lane)
 		entry.Proof = &ProofState{Dir: dir, Status: "running", Started: time.Now()}
 	}); err != nil {
 		return err
