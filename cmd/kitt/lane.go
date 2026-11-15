@@ -411,7 +411,7 @@ func cmdNew(args []string) error {
 		entry.Issue, _ = strconv.Atoi(rest[0])
 		entry.Title, entry.URL = issue.Title, issue.URL
 		name = rest[0] + "-" + slug(issue.Title, 32)
-	} else if ticketID.MatchString(rest[0]) {
+	} else if isTicket(rest[0], branch != "" || opts["prompt-env"] != "") {
 		entry.Ticket = rest[0]
 	}
 	if branch != "" {
@@ -556,6 +556,17 @@ func cmdNew(args []string) error {
 
 // ticketID is a tracker's identifier for an issue, as Linear writes it: ENG-123.
 var ticketID = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*-[0-9]+$`)
+
+// isTicket says whether kitt new's name is a ticket. Given alone, its team key
+// is upper case (ENG-123), so fix-2 or v2-3 stay names; from a tracker (a
+// --branch or --prompt-env, as kitt-linear passes) any case is a ticket.
+func isTicket(arg string, fromTracker bool) bool {
+	if !ticketID.MatchString(arg) {
+		return false
+	}
+	key := arg[:strings.Index(arg, "-")]
+	return fromTracker || key == strings.ToUpper(key)
+}
 
 const issuePrompt = "Implement issue #{issue}: {title}. Read it first with `gh issue view {issue} --comments`. " +
 	"This checkout is a kitt lane: `kitt env` prints its ports. The goal is a pull request that is ready to be merged, " +

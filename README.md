@@ -127,7 +127,7 @@ The prompt comes through the environment, not the arguments, so no text of it is
 
 Linear's prompt is kept in plain text in kitt's `state.json`, like any `--prompt` given to `kitt new`, so `g` can start the agent on it again.
 
-The same from the shell: `kitt new ENG-123 --branch tjark/eng-123-fix-login --prompt "…"`. A lane is then also named by its ticket: `kitt focus ENG-123`. Two branches that end alike (`tjark/eng-1-x`, `tom/eng-1-x`) would give one lane name; the second is refused with the first lane's branch named, and `kitt new ENG-1 --branch tom/eng-1-x --name eng-1-x-tom` gives it a name of its own.
+The same from the shell: `kitt new ENG-123 --branch tjark/eng-123-fix-login --prompt "…"`. A lane is then also named by its ticket, in any case: `kitt focus eng-123`. Given alone, a name is a ticket only with an upper-case team key (`kitt new ENG-123`; `kitt new fix-2` is a plain name); with `--branch` or `--prompt-env` any case is. Two branches that end alike (`tjark/eng-1-x`, `tom/eng-1-x`) would give one lane name; the second is refused with the first lane's branch named, and `kitt new ENG-1 --branch tom/eng-1-x --name eng-1-x-tom` gives it a name of its own.
 
 A Linear lane shows its ticket in the dashboard where an issue lane shows its number, and `kitt ls --json` carries it as `Ticket`.
 

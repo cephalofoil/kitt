@@ -184,6 +184,50 @@ func TestFindLaneByTicket(t *testing.T) {
 	}
 }
 
+// A bare name is a ticket only with an upper-case team key; from a tracker
+// (--branch, --prompt-env) any case is.
+func TestIsTicket(t *testing.T) {
+	for _, c := range []struct {
+		arg         string
+		fromTracker bool
+		want        bool
+	}{
+		{"ENG-123", false, true},
+		{"A1-7", false, true},
+		{"fix-2", false, false},
+		{"step-1", false, false},
+		{"v2-3", false, false},
+		{"Eng-123", false, false},
+		{"eng-123", true, true},
+		{"fix-login", true, false},
+		{"ENG-", true, false},
+	} {
+		if got := isTicket(c.arg, c.fromTracker); got != c.want {
+			t.Errorf("isTicket(%q, %v) = %v, want %v", c.arg, c.fromTracker, got, c.want)
+		}
+	}
+}
+
+// kitt new fix-2 makes a lane named fix-2, not a ticket; eng-7 with Linear's branch is one.
+func TestNewTicketOnlyFromTicketNames(t *testing.T) {
+	w := newLaneWorld(t)
+	if err := w.new("fix-2"); err != nil {
+		t.Fatal(err)
+	}
+	if entry := loadState().Lanes[norm(w.lanePath("fix-2"))]; entry == nil || entry.Ticket != "" {
+		t.Fatalf("fix-2: state %+v, want no ticket", entry)
+	}
+	if err := w.new("eng-7", "--branch", "tjark/eng-7-x"); err != nil {
+		t.Fatal(err)
+	}
+	if entry := loadState().Lanes[norm(w.lanePath("eng-7-x"))]; entry == nil || entry.Ticket != "eng-7" {
+		t.Fatalf("eng-7 --branch: state %+v, want the ticket eng-7", entry)
+	}
+	if lane, err := findLane("ENG-7"); err != nil || lane.Name != "eng-7-x" {
+		t.Errorf("findLane(ENG-7) = %q, %v", lane.Name, err)
+	}
+}
+
 func TestRepoAt(t *testing.T) {
 	t.Setenv("KITT_HOME", t.TempDir())
 	root := t.TempDir()
