@@ -536,6 +536,9 @@ func laneOpenings(row LaneView, cfg RepoConfig) ([]opening, int) {
 	switch {
 	case agent:
 		list = append(list, opening{"tell Claude something", "you type it next: it goes to the agent at work", focus("--no-up"), true})
+	case issue && row.State.Prompt != "":
+		// The prompt the lane was made with goes before the issue's (agentPrompt): the label says so.
+		list = append(list, opening{"Claude on the prompt the lane was made with", "it is given again, not kitt's issue prompt; the dev servers start", focus("--agent"), false})
 	case issue:
 		list = append(list, opening{"Claude on the issue, through to a pull request", issueHint, focus("--agent"), false})
 	default:

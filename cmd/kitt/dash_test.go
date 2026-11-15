@@ -89,6 +89,19 @@ func TestLaneOpenings(t *testing.T) {
 		"focus r/lane",
 		"focus r/lane --agent",
 	}, 0)
+	if label := list[4].label; !strings.Contains(label, "on the issue") {
+		t.Errorf("an issue lane without a prompt of its own offers %q", label)
+	}
+
+	// Made with a prompt, the lane's agent is given that prompt again, not the issue: the dialog says so.
+	stored := row(func(v *LaneView) { v.Workspace, v.State = "w1", &LaneState{Issue: 412, Prompt: "Fix the login"} })
+	list, _ = laneOpenings(stored, cfg)
+	if last := list[len(list)-1]; strings.Contains(last.label, "issue") || !strings.Contains(last.label, "prompt") {
+		t.Errorf("an issue lane with a stored prompt offers %q", last.label)
+	}
+	if got := agentPrompt(stored.Lane, cfg, ""); got != "Fix the login" {
+		t.Errorf("the agent of that lane is told %q", got)
+	}
 }
 
 func TestOverlay(t *testing.T) {
