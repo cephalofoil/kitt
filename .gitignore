@@ -1,5 +1,6 @@
 **/.claude-plugin/types/
 *.exe
+/kitt
 
 # Local environment files; keep shareable templates versionable.
 .env

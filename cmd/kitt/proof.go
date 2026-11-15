@@ -57,11 +57,11 @@ func cmdProof(args []string) error {
 		if label == "" {
 			return fail("usage: kitt proof shot <label>")
 		}
-		serial, err := adbDevice(loadRepoConfig(lane.Main, lane.Path))
+		dev, err := pickDevice(loadRepoConfig(lane.Main, lane.Path))
 		if err != nil {
 			return err
 		}
-		png, err := runBytes(20*time.Second, "adb", "-s", serial, "exec-out", "screencap", "-p")
+		png, err := dev.screenshot()
 		if err != nil || len(png) < 1000 {
 			return fail("the screenshot failed")
 		}
@@ -189,7 +189,10 @@ func proofBegin(lane Lane, opts map[string]string) error {
 
 	fmt.Printf("proof started for %s\n  %s\n", lane.Name, dir)
 	if useEmulator {
-		fmt.Println("  the emulator is yours until `kitt proof end`; drive it with adb")
+		fmt.Println("  the emulator is yours until `kitt proof end`")
+		if dev, err := pickDevice(cfg); err == nil {
+			fmt.Println("  " + dev.driveHint())
+		}
 	}
 	fmt.Println("  kitt proof shot <label>   after each step worth showing")
 	fmt.Println("  kitt proof end --pass     or --fail --note \"what is wrong\"")

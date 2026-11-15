@@ -48,8 +48,11 @@ type AgentCfg struct {
 }
 
 type EmuCfg struct {
-	Serial  string `toml:"serial"`
-	Reverse []int  `toml:"reverse"`
+	// Platform is android, ios or auto (the default): which device kitt drives.
+	Platform  string `toml:"platform"`
+	Serial    string `toml:"serial"`
+	Simulator string `toml:"simulator"`
+	Reverse   []int  `toml:"reverse"`
 }
 
 type ProofCfg struct {
