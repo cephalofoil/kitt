@@ -123,6 +123,10 @@ Turn on **Custom script** in Linear (Settings → Code & reviews → Configure c
 
 The prompt comes through the environment, not the arguments, so no text of it is read as a flag. `--dir` picks the registered repo the working directory lies in. Linear runs the script outside any shell and does not wait: it sets its own PATH, works in the background into `~/Library/Logs/kitt-linear.log`, starts herdr in Terminal when no herdr server runs (`KITT_TERMINAL=iTerm` for iTerm), and reports a failure as a notification.
 
+`kitt-linear` runs on macOS only: it is a zsh script that uses `osascript` and `~/Library/Logs`. There is no Windows counterpart yet.
+
+Linear's prompt is kept in plain text in kitt's `state.json`, like any `--prompt` given to `kitt new`, so `g` can start the agent on it again.
+
 The same from the shell: `kitt new ENG-123 --branch tjark/eng-123-fix-login --prompt "…"`. A lane is then also named by its ticket: `kitt focus ENG-123`.
 
 ## How lanes stay apart
@@ -188,7 +192,9 @@ EXPO_PUBLIC_API_URL = "http://localhost:{port:api}"
 
 `[app.env]` reaches the dev server as its environment. Some bundlers read env files into the client bundle and let them win over that environment: Expo merges `.env`, `.env.local`, `.env.development.local` over `process.env`, so a linked `.env.local` from the main checkout sends every lane's app to the main checkout's api. `env_out` names a file in the app's directory that `kitt up` writes the lane's `[app.env]` and `port_env` values into, sorted, mode 0600, before it starts the app; env files' values are never copied into it. Pick one the bundler reads last and the repo ignores; kitt warns when git would commit it and refuses a symlink (a linked file is the main checkout's).
 
-kitt remembers what it started each app with. When the command, the environment or `env_out` changes, the next `kitt up` or `kitt focus` restarts that app instead of leaving the old one running.
+The file's name decides whether it wins. For Expo, when `.env.local` is linked from the main checkout, use `.env.development.local`.
+
+kitt remembers what it started each app with. When the command, the environment or `env_out` changes, the next `kitt up` or `kitt focus` restarts that app instead of leaving the old one running. This holds only for apps a kitt with `env_out` started: a Metro started before is left running as it is, so after upgrading run `kitt down` and `kitt up` once.
 
 `{port}`, `{port:<app>}`, `{lane}`, `{slot}`, `{root}` and `{main}` are filled per lane. `lazy = true` defers an app's setup and start until it is named; `shared = true` runs it once for all lanes.
 
@@ -212,7 +218,8 @@ Proofs are kept under kitt's own folder (`%APPDATA%\kitt\proofs`), outside the r
 With `[stack] mode = "single"` a repo runs one lane's servers at a time, and the emulator shows that lane. A lease, kept in kitt's folder, says which lane holds the stack, since when and why.
 
 - `kitt focus`, `kitt up` and `kitt emu` take a **soft** lease: the lane that had the stack is stopped (its dev tab closed, its stop lines run, anything still on its ports killed) and the new lane's servers start.
-- `kitt proof begin` and `kitt claim` take a **hard** lease, and the emulator with it. Another lane's `focus`, `up` or `claim` waits for it (`--wait 10m`) or fails naming the holder; `--force` takes it anyway, a person's call. `kitt proof end` and `kitt release` make it soft again; `kitt release --down` also stops the servers.
+- A takeover waits ten seconds for each of the old lane's ports to fall quiet, then kills whatever still listens there, a server you started by hand included.
+- `kitt proof begin` and `kitt claim` take a **hard** lease, and the emulator with it. Another lane's `focus`, `up` or `emu` fails naming the holder; `claim` and `proof begin` wait for it (`--wait 10m`) first. `--force` on `focus`, `emu` or `claim` takes it anyway, a person's call. `kitt proof end` and `kitt release` make it soft again; `kitt release --down` also stops the servers.
 - A hard lease lapses when the session that took it ends, or when it is not renewed for `lease_ttl` (each `kitt proof shot`, `claim` or `up` of the holder renews it).
 
 ```
@@ -222,6 +229,8 @@ kitt release                                          # done: the stack stays up
 ```
 
 `kitt ls` shows the lease above the lanes, the dashboard marks the holder with ⚿. The single mode needs herdr: kitt starts servers only in herdr panes, and stops only what it can find.
+
+[docs/single-mode.md](docs/single-mode.md) describes the lease, the takeover and `env_out` as the code has them, and their limits.
 
 ## pr-watch
 
@@ -253,6 +262,14 @@ The tools, as Claude sees them:
 - `mcp__pr-watch__rebase_and_push`: rebases onto the default branch and pushes with lease. A conflicting rebase is undone and answered with the files.
 
 The branch name sits at the end of the hint line. `/pr-watch` opens the full view of the PR. Keys work once the band has focus (click it, or ctrl+x tab).
+
+### In opencode
+
+`opencode/pr-watch` brings the band, its keys and the tools to opencode. It is experimental, a spike, and not published as a package. `.opencode/` in this repo's root loads it, so anyone who starts opencode inside the kitt repo gets it. Its merge guard is weaker than the mod's: merging is held by opencode's own permission prompt, and that prompt offers "always".
+
+## Development
+
+CI runs gofmt, `go vet` (also for Windows and macOS) and `go test -race` on the CLI, and the typecheck and tests of `opencode/pr-watch`. The Claude Code mod's tests run only through `claude plugin test`, not in CI.
 
 ## License
 

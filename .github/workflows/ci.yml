@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# The Claude Code mod in pr-watch/ has no job: it has no package.json, its
+# tsconfig extends .claude-plugin/types/tsconfig.json, which is gitignored and
+# not in the repo, and its tests import `claude-code/testing`, which only
+# `claude plugin test` provides. A plain `bun test` there fails.
+
+jobs:
+  go:
+    name: Go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l cmd/)"
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test -race ./...
+
+      - name: go vet (windows)
+        run: GOOS=windows go vet ./...
+
+      - name: go vet (darwin)
+        run: GOOS=darwin go vet ./...
+
+  opencode-pr-watch:
+    name: opencode pr-watch
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        # The plugin imports from ../../pr-watch, so the whole repo is checked out.
+        working-directory: opencode/pr-watch
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: bun install
+        run: bun install --frozen-lockfile
+
+      - name: typecheck
+        run: bun run typecheck
+
+      - name: bun test
+        run: bun test
