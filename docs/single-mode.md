@@ -193,7 +193,9 @@ stops the old lane's stack. For the old lane's slot:
    lane has had a phone Metro (`phone` or `phone_pane` set in its state) and
    the expo app is a stack app, its port (`phonePort`: the first port after the
    lane's Metro that no app has) is freed the same way, as `<app> phone`.
-   Afterwards the lane's phone record is cleared.
+   Afterwards the lane's phone record is cleared when the phone Metro was
+   stopped (its tab closed, or the expo app a stack app); a kept, running
+   Metro's phone twin keeps its record, so `kitt phone` still checks its address.
 
 These lines are printed under `stopped <old lane>`. Then the new lane's servers
 start (`up`, `focus`, `claim`), or the emulator is pointed at it (`emu`).
@@ -374,6 +376,7 @@ anything.
 | `TestTakeoverOpening` | another lane's hard lease adds `--force` as the last choice, never the starting one, naming holder and reason, for a lane and a new lane |
 | `TestBlockingLease` | only a live hard lease of another lane in the single mode offers the takeover; enter on a lane shows it |
 | `TestStackPortsIncludePhone` | a takeover frees the phone Metro's port once the lane has had one, not when the expo app is kept |
+| `TestStopStackKeepsRunningPhoneRecord` | a kept, running Metro's phone record stays after a takeover; it is cleared when the kept Metro is down or the Metro is a stack app |
 | `TestPhoneTakesStack` | `kitt phone` takes a soft lease and stops the lane before, fails against a hard one, takes none with `--print`, needs herdr |
 | `TestPhoneMetroEnv` | with or without `env_out`: the app's env files, `[app.env]` and the phone port with LAN addresses; no `EXPO_NO_DOTENV`, nothing read from the app dir's `.env` files |
 | `TestRmDropsLease` | `kitt rm` removes the lane's lease and emulator lock |

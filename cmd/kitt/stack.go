@@ -295,7 +295,10 @@ func stopStack(lane Lane, cfg RepoConfig) []string {
 	for _, port := range stackPorts(lane, cfg, apps, entry) {
 		lines = append(lines, freePort(port.name, port.port)...)
 	}
-	forgetPhone(lane)
+	if closeTab || stacksPhone(cfg, apps) {
+		// Else a kept Metro's phone twin runs on, and kitt phone still checks its address.
+		forgetPhone(lane)
+	}
 	return lines
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -85,6 +86,49 @@ func TestStackPortsIncludePhone(t *testing.T) {
 	cfg.Stack.Keep = []string{"mobile"}
 	if got := names(stackPorts(lane, cfg, stackApps(cfg), entry)); got != "api:8010" {
 		t.Errorf("a kept Metro keeps its phone twin: %s", got)
+	}
+}
+
+// stopStack forgets the phone Metro only when it stopped it: with the Metro kept
+// and running, the dev tab and the phone port stay, so its record stays too.
+func TestStopStackKeepsRunningPhoneRecord(t *testing.T) {
+	t.Setenv("KITT_HOME", t.TempDir())
+	t.Setenv("KITT_NO_HERDR", "1")
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	lane := Lane{Repo: "r", Main: t.TempDir(), Path: t.TempDir(), Name: "p", Slot: 1, Managed: true}
+	metro := listener.Addr().(*net.TCPAddr).Port - lane.Slot*portStride
+	cfg := RepoConfig{Name: "r", Stack: StackCfg{Mode: "single", Keep: []string{"mobile"}}, Apps: []App{
+		{Name: "mobile", Kind: "expo", Port: metro, Dev: "expo start --port {port}"},
+		{Name: "api", Kind: "backend", Dev: "run api"},
+	}}
+	record := func() {
+		_ = updateState(func(s *State) {
+			s.Lanes[lane.key()] = &LaneState{Slot: lane.Slot, Phone: "192.168.1.20", PhonePane: "p9"}
+		})
+	}
+	phone := func() string { return loadState().Lanes[lane.key()].Phone }
+
+	record()
+	stopStack(lane, cfg)
+	if phone() != "192.168.1.20" {
+		t.Error("a kept, running Metro's phone twin was forgotten")
+	}
+
+	listener.Close() // the kept Metro is down: the dev tab closes, and the phone Metro in it
+	stopStack(lane, cfg)
+	if phone() != "" {
+		t.Error("kept Metro down: the phone Metro is still remembered")
+	}
+
+	record()
+	cfg.Stack.Keep = nil // the Metro is a stack app: its phone twin is stopped with it
+	stopStack(lane, cfg)
+	if phone() != "" {
+		t.Error("stacked Metro: the phone Metro is still remembered")
 	}
 }
 
