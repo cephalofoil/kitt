@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // laneWorld is a kitt home with one registered repo, "r", cloned from a bare
@@ -207,5 +208,34 @@ func TestRepoAt(t *testing.T) {
 	}
 	if _, err := repoAt(filepath.Join(root, "elsewhere")); err == nil || !strings.Contains(err.Error(), "no registered repo") {
 		t.Errorf("repoAt outside: %v", err)
+	}
+}
+
+// A removed lane holds nothing: its lease and the emulator are free for the next lane.
+func TestRmDropsLease(t *testing.T) {
+	w := newLaneWorld(t)
+	if err := w.new("tryout"); err != nil {
+		t.Fatal(err)
+	}
+	lane, err := findLane("r/tryout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now()
+	if err := writeJSON(leasePath("r"), Lease{Repo: "r", Lane: lane.key(), Name: lane.Name, Kind: "hard", Reason: "proof",
+		Holder: os.Getpid(), Since: at, Renewed: at, Path: lane.Path, Main: lane.Main, Slot: lane.Slot}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(lockPath(), emuLock{Lane: lane.key(), Name: lane.Name, At: at, Holder: os.Getpid()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdRm([]string{"r/tryout"}); err != nil {
+		t.Fatal(err)
+	}
+	if exists(leasePath("r")) {
+		t.Fatal("the removed lane's lease is still there")
+	}
+	if exists(lockPath()) {
+		t.Fatal("the removed lane still holds the emulator")
 	}
 }

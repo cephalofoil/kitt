@@ -984,6 +984,9 @@ func cmdRm(args []string) error {
 
 	// Whatever the lane started (a container on its port) goes before its directory does.
 	down(lane)
+	// A lane that is gone holds nothing: its hard lease would keep other lanes out until its ttl.
+	dropLease(lane)
+	releaseEmulator(lane)
 
 	// The linked files are symlinks into the main checkout: take the links away
 	// first so no removal can follow one.
