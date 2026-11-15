@@ -113,13 +113,29 @@ func cmdDoctor([]string) error {
 		xcrun, simErr := exec.LookPath("xcrun")
 		line(adbErr == nil || simErr == nil, "adb", "Android emulator  "+orText(adb, "not installed (optional with the iOS simulator)"))
 		line(simErr == nil, "simctl", "iOS simulator  "+orText(xcrun, "install Xcode"))
+		if simErr == nil {
+			// Not needed, but without one an agent reaches a screen only by deep link.
+			driver := "neither axe nor idb: an agent can open screens by deep link only"
+			for _, tool := range []string{"axe", "idb"} {
+				if path, err := exec.LookPath(tool); err == nil {
+					driver = tool + " drives the simulator (tap, type, describe-ui)  " + path
+					break
+				}
+			}
+			fmt.Printf("· %-9s %s\n", "ui", driver)
+		}
 	} else {
 		line(adbErr == nil, "adb", "the emulator  "+adb)
 	}
-	if dev, err := pickDevice(RepoConfig{}); err == nil {
-		line(true, "device", dev.String()+"  (KITT_PLATFORM=android|ios to choose)")
+	// Inside a repo (or lane) its kitt.toml says which device it wants.
+	cfg, from := RepoConfig{}, ""
+	if lane, err := findLane(""); err == nil {
+		cfg, from = loadRepoConfig(lane.Main, lane.Path), "  for "+lane.Repo
+	}
+	if dev, err := pickDevice(cfg); err == nil {
+		line(true, "device", dev.String()+from+"  (KITT_PLATFORM=android|ios to choose)")
 	} else {
-		line(false, "device", err.Error())
+		line(false, "device", err.Error()+from)
 	}
 	line(hasHerdr(), "herdr up", "the herdr server answers")
 
