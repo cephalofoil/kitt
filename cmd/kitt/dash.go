@@ -571,6 +571,25 @@ func (d dash) create(prompt string) (tea.Model, tea.Cmd) {
 	return d, self(args...)
 }
 
+// laneTitle is what a lane row says the lane is for: its issue or ticket and
+// title, else its pull request's title, else its branch.
+func laneTitle(row LaneView) string {
+	title := row.Branch
+	switch {
+	case row.State != nil && row.State.Title != "" && row.State.Issue > 0:
+		title = fmt.Sprintf("#%d %s", row.State.Issue, row.State.Title)
+	case row.State != nil && row.State.Title != "":
+		title = row.State.Title
+	case row.PR != nil:
+		title = row.PR.Title
+	}
+	// A Linear lane has no title of its own: its ticket goes where an issue's number does.
+	if row.State != nil && row.State.Ticket != "" && row.State.Issue == 0 {
+		title = row.State.Ticket + " " + title
+	}
+	return title
+}
+
 func cut(s string, width int) string {
 	r := []rune(s)
 	if width <= 0 {
@@ -678,17 +697,7 @@ func (d dash) View() string {
 			continue
 		}
 
-		title := row.Branch
-		switch {
-		case row.State != nil && row.State.Title != "" && row.State.Issue > 0:
-			title = fmt.Sprintf("#%d %s", row.State.Issue, row.State.Title)
-		case row.State != nil && row.State.Title != "":
-			title = row.State.Title
-		case row.PR != nil:
-			title = row.PR.Title
-		}
-
-		b.WriteString(pointer + agentDot(row.Agent) + " " + name + " " + dim.Render(cut(title, titleW)) + " " + cyan.Render(cut(strings.Join(row.Touched, "·"), appsW)) + " " +
+		b.WriteString(pointer + agentDot(row.Agent) + " " + name + " " + dim.Render(cut(laneTitle(row), titleW)) + " " + cyan.Render(cut(strings.Join(row.Touched, "·"), appsW)) + " " +
 			agentCell(row.Agent, agentW) + gitCell(row, gitW) + prCell(row, prW) + proofCell(row, proofW) + marks(row) + "\n")
 	}
 	if hidden > 0 && !d.showAll {

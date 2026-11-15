@@ -274,10 +274,13 @@ func cmdLs(args []string) error {
 			Repo, Name, Path, Branch, Agent string
 			Slot, Dirty, Ahead, Behind      int
 			Managed, InEmulator             bool
-			PR                              *PR
-			Checks                          *CheckResult
-			Proof                           *ProofState
-			Lease                           *Lease
+			// Issue and Ticket say what the lane is for: a GitHub issue, a tracker's ENG-123.
+			Issue  int    `json:",omitempty"`
+			Ticket string `json:",omitempty"`
+			PR     *PR
+			Checks *CheckResult
+			Proof  *ProofState
+			Lease  *Lease
 		}
 		var list []row
 		for _, v := range rows {
@@ -285,6 +288,7 @@ func cmdLs(args []string) error {
 				Dirty: v.Dirty, Ahead: v.Ahead, Behind: v.Behind, Managed: v.Managed, InEmulator: v.InEmulator, PR: v.PR, Lease: v.Lease}
 			if v.State != nil {
 				item.Checks, item.Proof = v.State.Checks, v.State.Proof
+				item.Issue, item.Ticket = v.State.Issue, v.State.Ticket
 			}
 			list = append(list, item)
 		}

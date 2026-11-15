@@ -261,6 +261,38 @@ func TestBacklog(t *testing.T) {
 	}
 }
 
+// A Linear lane shows its ticket where an issue lane shows its number, in the same width.
+func TestLaneRowShowsTicket(t *testing.T) {
+	t.Setenv("KITT_HOME", t.TempDir())
+	ticket := LaneView{Lane: Lane{Repo: "r", Name: "eng-123-fix-login", Branch: "tjark/eng-123-fix-login", Managed: true,
+		State: &LaneState{Ticket: "ENG-123", Branch: "tjark/eng-123-fix-login"}}}
+	issue := LaneView{Lane: Lane{Repo: "r", Name: "412-empty", Branch: "feat/412-empty", Managed: true,
+		State: &LaneState{Issue: 412, Title: "Empty state"}}}
+	if got := laneTitle(ticket); got != "ENG-123 tjark/eng-123-fix-login" {
+		t.Errorf("ticket lane title %q", got)
+	}
+	if got := laneTitle(issue); got != "#412 Empty state" {
+		t.Errorf("issue lane title %q", got)
+	}
+
+	d := dash{loaded: true, width: 140, height: 30, rows: []LaneView{ticket, issue}}
+	view := ansi.Strip(d.View())
+	var widths []int
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, "eng-123-fix-login ") || strings.Contains(line, "412-empty ") {
+			widths = append(widths, len([]rune(strings.TrimRight(line, " "))))
+		}
+	}
+	if !strings.Contains(view, "ENG-123 tjark/") || !strings.Contains(view, "#412 Empty state") || len(widths) != 2 {
+		t.Fatalf("the lane rows:\n%s", view)
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if len([]rune(line)) > 140 {
+			t.Errorf("a line is %d wide in a pane of 140: %q", len([]rune(line)), line)
+		}
+	}
+}
+
 func TestIssuePrompt(t *testing.T) {
 	lane := Lane{State: &LaneState{Issue: 412, Title: "Empty state"}}
 	prompt := agentPrompt(lane, RepoConfig{}, "")
