@@ -47,10 +47,13 @@ type DevStart struct {
 }
 
 type EmuState struct {
-	Lane   string    `json:"lane"`
-	Port   int       `json:"port"`
-	Device string    `json:"device,omitempty"`
-	At     time.Time `json:"at"`
+	Lane   string `json:"lane"`
+	Port   int    `json:"port"`
+	Device string `json:"device,omitempty"`
+	// Platform and ID name the device itself, so a running proof stays on it.
+	Platform string    `json:"platform,omitempty"`
+	ID       string    `json:"id,omitempty"`
+	At       time.Time `json:"at"`
 }
 
 type CheckResult struct {

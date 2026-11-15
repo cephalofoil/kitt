@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,20 @@ type device struct {
 	Platform string // android | ios
 	ID       string // adb serial or simulator UDID
 	Name     string
+	Off      bool // a simulator that is not booted
+}
+
+// onMac says whether there can be an iOS simulator; a variable for the tests.
+var onMac = runtime.GOOS == "darwin"
+
+// listDevices lists a platform's devices: the attached Android ones, or every
+// simulator, Off where it is not booted. A variable, so the choice among them
+// is tested without adb or simctl.
+var listDevices = func(platform string) ([]device, error) {
+	if platform == "ios" {
+		return listSimulators()
+	}
+	return listAndroid()
 }
 
 func (d device) String() string {
@@ -63,7 +78,7 @@ func pickDevice(cfg RepoConfig) (device, error) {
 	if androidErr == nil {
 		return android, nil
 	}
-	if runtime.GOOS != "darwin" {
+	if !onMac {
 		return device{}, androidErr
 	}
 	ios, iosErr := iosDevice(cfg)
@@ -77,30 +92,66 @@ func androidDevice(cfg RepoConfig) (device, error) {
 	if cfg.Emulator.Serial != "" {
 		return device{Platform: "android", ID: cfg.Emulator.Serial, Name: cfg.Emulator.Serial}, nil
 	}
+	devices, err := listDevices("android")
+	if err != nil {
+		return device{}, err
+	}
+	if len(devices) == 0 {
+		return device{}, fail("no Android emulator or device is attached")
+	}
+	return devices[0], nil
+}
+
+func listAndroid() ([]device, error) {
 	if _, err := exec.LookPath("adb"); err != nil {
-		return device{}, fail("adb is not installed")
+		return nil, fail("adb is not installed")
 	}
 	out, err := run("", "adb", "devices")
 	if err != nil {
-		return device{}, fail("adb does not answer: %s", err)
+		return nil, fail("adb does not answer: %s", err)
 	}
+	var devices []device
 	for _, line := range strings.Split(out, "\n")[1:] {
 		fields := strings.Fields(line)
 		if len(fields) == 2 && fields[1] == "device" {
-			return device{Platform: "android", ID: fields[0], Name: fields[0]}, nil
+			devices = append(devices, device{Platform: "android", ID: fields[0], Name: fields[0]})
 		}
 	}
-	return device{}, fail("no Android emulator or device is attached")
+	return devices, nil
 }
 
 // iosDevice is the simulator named in kitt.toml (UDID or name), else the first booted one.
 func iosDevice(cfg RepoConfig) (device, error) {
-	if runtime.GOOS != "darwin" {
+	if !onMac {
 		return device{}, fail("the iOS simulator needs a Mac")
 	}
+	sims, err := listDevices("ios")
+	if err != nil {
+		return device{}, err
+	}
+	want := cfg.Emulator.Simulator
+	for _, sim := range sims {
+		if want != "" && sim.ID != want && sim.Name != want {
+			continue
+		}
+		if sim.Off {
+			if want != "" {
+				return device{}, fail("the simulator %s is not booted: xcrun simctl boot %q && open -a Simulator", sim.Name, sim.ID)
+			}
+			continue
+		}
+		return sim, nil
+	}
+	if want != "" {
+		return device{}, fail("no simulator %q: xcrun simctl list devices", want)
+	}
+	return device{}, fail("no iOS simulator is booted: open -a Simulator")
+}
+
+func listSimulators() ([]device, error) {
 	out, err := run("", "xcrun", "simctl", "list", "devices", "-j")
 	if err != nil {
-		return device{}, fail("simctl is not available (install Xcode): %s", err)
+		return nil, fail("simctl is not available (install Xcode): %s", err)
 	}
 	var list struct {
 		Devices map[string][]struct {
@@ -110,27 +161,47 @@ func iosDevice(cfg RepoConfig) (device, error) {
 		} `json:"devices"`
 	}
 	if err := json.Unmarshal([]byte(out), &list); err != nil {
-		return device{}, fail("simctl list: %s", err)
+		return nil, fail("simctl list: %s", err)
 	}
-	want := cfg.Emulator.Simulator
-	for _, sims := range list.Devices {
-		for _, sim := range sims {
-			if want != "" && sim.UDID != want && sim.Name != want {
-				continue
-			}
-			if sim.State != "Booted" {
-				if want != "" {
-					return device{}, fail("the simulator %s is not booted: xcrun simctl boot %q && open -a Simulator", sim.Name, sim.UDID)
-				}
-				continue
-			}
-			return device{Platform: "ios", ID: sim.UDID, Name: sim.Name}, nil
+	// By runtime, in a steady order: which booted one is first does not change from run to run.
+	runtimes := make([]string, 0, len(list.Devices))
+	for name := range list.Devices {
+		runtimes = append(runtimes, name)
+	}
+	sort.Strings(runtimes)
+	var devices []device
+	for _, name := range runtimes {
+		for _, sim := range list.Devices[name] {
+			devices = append(devices, device{Platform: "ios", ID: sim.UDID, Name: sim.Name, Off: sim.State != "Booted"})
 		}
 	}
-	if want != "" {
-		return device{}, fail("no simulator %q: xcrun simctl list devices", want)
+	return devices, nil
+}
+
+// laneDevice is the device a lane's app is on. While the lane's proof runs it
+// is the one the emulator was pointed on for it, never another: on auto an
+// Android emulator started meanwhile would win and take the next shots.
+func laneDevice(lane Lane, cfg RepoConfig) (device, error) {
+	s := loadState()
+	entry := s.Lanes[lane.key()]
+	if entry != nil && entry.Proof != nil && entry.Proof.Status == "running" && s.Emulator != nil && s.Emulator.Lane == lane.key() && s.Emulator.ID != "" {
+		return s.Emulator.recorded()
 	}
-	return device{}, fail("no iOS simulator is booted: open -a Simulator")
+	return pickDevice(cfg)
+}
+
+// recorded is the device the emulator was pointed on, if it is still there.
+// A state from before the platform and id were kept has none: laneDevice picks then.
+func (e EmuState) recorded() (device, error) {
+	devices, err := listDevices(e.Platform)
+	if err == nil {
+		for _, dev := range devices {
+			if dev.ID == e.ID && !dev.Off {
+				return dev, nil
+			}
+		}
+	}
+	return device{}, fail("%s, which the lane's app was loaded on, is gone: start it again and `kitt emu`, or end the proof with `kitt proof end --fail --note \"device gone\"`", e.Device)
 }
 
 // reach makes the lane's ports answer on the device's localhost. A simulator

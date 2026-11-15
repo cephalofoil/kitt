@@ -15,7 +15,11 @@ import (
 
 // pointEmulator loads a lane's bundle into the dev client: the lane's ports are
 // made to reach the device, then the client is sent to the lane's Metro.
-func pointEmulator(lane Lane) (string, error) {
+// While the lane's proof runs, that is the device the proof began on.
+func pointEmulator(lane Lane) (string, error) { return pointOn(lane, laneDevice) }
+
+// pointOn is pointEmulator on the device `pick` finds.
+func pointOn(lane Lane, pick func(Lane, RepoConfig) (device, error)) (string, error) {
 	cfg := loadRepoConfig(lane.Main, lane.Path)
 	app := cfg.expo()
 	if app == nil {
@@ -36,7 +40,7 @@ func pointEmulator(lane Lane) (string, error) {
 	if app.Scheme == "" {
 		return "", fail("no deep-link scheme known for %s: set `scheme` on the app in kitt.toml", app.Name)
 	}
-	dev, err := pickDevice(cfg)
+	dev, err := pick(lane, cfg)
 	if err != nil {
 		return "", err
 	}
@@ -57,7 +61,7 @@ func pointEmulator(lane Lane) (string, error) {
 	}
 
 	_ = updateState(func(s *State) {
-		s.Emulator = &EmuState{Lane: lane.key(), Port: port, Device: dev.String(), At: time.Now()}
+		s.Emulator = &EmuState{Lane: lane.key(), Port: port, Device: dev.String(), Platform: dev.Platform, ID: dev.ID, At: time.Now()}
 	})
 	return fmt.Sprintf("%s → %s (Metro %d)", dev, lane.Name, port), nil
 }

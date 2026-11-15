@@ -58,7 +58,7 @@ func cmdProof(args []string) error {
 			return fail("usage: kitt proof shot <label>")
 		}
 		renewStack(lane)
-		dev, err := pickDevice(loadRepoConfig(lane.Main, lane.Path))
+		dev, err := laneDevice(lane, loadRepoConfig(lane.Main, lane.Path))
 		if err != nil {
 			return err
 		}
@@ -184,7 +184,8 @@ func proofBegin(lane Lane, opts map[string]string) error {
 				return err
 			}
 		}
-		message, err := pointEmulator(lane)
+		// A proof begun anew picks its device afresh, even over one left running.
+		message, err := pointOn(lane, func(_ Lane, cfg RepoConfig) (device, error) { return pickDevice(cfg) })
 		if err != nil {
 			_, _ = releaseStack(lane, false)
 			return err
@@ -212,7 +213,7 @@ func proofBegin(lane Lane, opts map[string]string) error {
 	fmt.Printf("proof started for %s\n  %s\n", lane.Name, dir)
 	if useEmulator {
 		fmt.Println("  the emulator is yours until `kitt proof end`")
-		if dev, err := pickDevice(cfg); err == nil {
+		if dev, err := laneDevice(lane, cfg); err == nil {
 			fmt.Println("  " + dev.driveHint())
 		}
 	} else if cfg.Stack.single() {
