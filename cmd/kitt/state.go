@@ -14,13 +14,18 @@ type State struct {
 }
 
 type LaneState struct {
-	Repo    string    `json:"repo"`
-	Name    string    `json:"name"`
-	Path    string    `json:"path"`
-	Slot    int       `json:"slot"`
-	Issue   int       `json:"issue,omitempty"`
-	Title   string    `json:"title,omitempty"`
-	URL     string    `json:"url,omitempty"`
+	Repo  string `json:"repo"`
+	Name  string `json:"name"`
+	Path  string `json:"path"`
+	Slot  int    `json:"slot"`
+	Issue int    `json:"issue,omitempty"`
+	Title string `json:"title,omitempty"`
+	URL   string `json:"url,omitempty"`
+	// Ticket is a tracker's identifier (Linear's ENG-123), Branch the branch the
+	// lane was made on when it was given one, Prompt what its agent was started with.
+	Ticket  string    `json:"ticket,omitempty"`
+	Branch  string    `json:"branch,omitempty"`
+	Prompt  string    `json:"prompt,omitempty"`
 	Created time.Time `json:"created"`
 	Setup   []string  `json:"setup,omitempty"`
 	// Apps are the apps this lane is about; empty means the repo's usual ones.
