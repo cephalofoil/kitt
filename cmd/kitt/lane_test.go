@@ -148,6 +148,24 @@ func TestNewBranchThatIsNoBranchName(t *testing.T) {
 	}
 }
 
+// Two branches that end alike give one lane name: the second says whose it is and how to go on.
+func TestNewLaneNameTaken(t *testing.T) {
+	w := newLaneWorld(t)
+	if err := w.new("ENG-1", "--branch", "tjark/eng-1-x"); err != nil {
+		t.Fatal(err)
+	}
+	err := w.new("ENG-1", "--branch", "tom/eng-1-x")
+	if err == nil || !strings.Contains(err.Error(), "tjark/eng-1-x") || !strings.Contains(err.Error(), "--name") {
+		t.Fatalf("err %v: it must name the lane's branch and --name", err)
+	}
+	if err := w.new("ENG-1", "--branch", "tom/eng-1-x", "--name", "eng-1-x-tom"); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.out(w.lanePath("eng-1-x-tom"), "rev-parse", "--abbrev-ref", "HEAD"); got != "tom/eng-1-x" {
+		t.Fatalf("the named lane is on %q", got)
+	}
+}
+
 // A lane is named by its ticket too, in any case: Linear writes ENG-123, a person eng-123.
 func TestFindLaneByTicket(t *testing.T) {
 	w := newLaneWorld(t)

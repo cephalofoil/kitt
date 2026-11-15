@@ -327,7 +327,7 @@ func cmdNew(args []string) error {
 		apps = strings.Split(opts["apps"], ",")
 	}
 	if len(rest) == 0 {
-		return fail("usage: kitt new <issue number | ticket | name> [--repo r | --dir d] [--base ref] [--branch b] [--apps web,admin] [--agent | --blank | --no-agent] [--prompt text | --prompt-env VAR] [--up] [--focus]")
+		return fail("usage: kitt new <issue number | ticket | name> [--repo r | --dir d] [--base ref] [--branch b] [--name lane] [--apps web,admin] [--agent | --blank | --no-agent] [--prompt text | --prompt-env VAR] [--up] [--focus]")
 	}
 	repo, err := findRepo(opts["repo"])
 	if opts["dir"] != "" && opts["repo"] == "" {
@@ -420,7 +420,12 @@ func cmdNew(args []string) error {
 			name = fromBranch
 		}
 		entry.Branch = branch
-	} else {
+	}
+	// Two branches can end alike (tjark/eng-1-x, tom/eng-1-x): --name tells their lanes apart.
+	if opts["name"] != "" {
+		name = slug(opts["name"], 40)
+	}
+	if branch == "" {
 		branch = cfg.BranchPrefix + name
 	}
 	if name == "" {
@@ -430,7 +435,12 @@ func cmdNew(args []string) error {
 
 	path := filepath.Join(cfg.lanesDir(repo.Path), name)
 	if exists(path) {
-		return fail("%s exists already", path)
+		for _, lane := range lanesOf(repo, loadState()) {
+			if lane.key() == norm(path) {
+				return fail("the lane %s exists already, on the branch %s: give this one a name of its own with --name <lane>", name, lane.Branch)
+			}
+		}
+		return fail("%s exists already: give the lane another name with --name <lane>", path)
 	}
 	base := opts["base"]
 	if base == "" {

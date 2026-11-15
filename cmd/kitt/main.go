@@ -18,6 +18,7 @@ const usage = `kitt — lanes for parallel work
         [--blank] [--up]           a blank agent, whatever the lane is for · its dev servers started
         [--branch b] [--dir d]     the branch to use instead of branch_prefix + name · the repo by a directory
         [--apps web,admin]         the apps the lane is about, when not the repo's usual ones
+        [--name lane]              the lane's name, where the one from the branch is taken
         [--repo r] [--base ref] [--focus] [--no-setup]
   kitt pr <number>               check an open pull request out as a lane, to look at it before the merge
   kitt agent [lane] [--prompt t] start the lane's agent, or hand the running one a prompt
