@@ -22,25 +22,31 @@ const devTab = "dev"
 func appEnv(cfg RepoConfig, app App, lane Lane, dir string) map[string]string {
 	env := map[string]string{}
 	for _, name := range app.EnvFiles {
-		file, err := os.Open(filepath.Join(dir, filepath.FromSlash(name)))
-		if err != nil {
-			continue
-		}
-		scanner := bufio.NewScanner(file)
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			key, value, ok := strings.Cut(line, "=")
-			if !ok || strings.HasPrefix(line, "#") {
-				continue
-			}
-			env[strings.TrimSpace(key)] = strings.Trim(strings.TrimSpace(value), `"'`)
-		}
-		file.Close()
+		readEnvFile(filepath.Join(dir, filepath.FromSlash(name)), env)
 	}
 	for key, value := range laneEnv(cfg, app, lane) {
 		env[key] = value
 	}
 	return env
+}
+
+// readEnvFile adds a file's KEY=value lines to env, over what is there. A file
+// that is not there adds nothing.
+func readEnvFile(path string, env map[string]string) {
+	file, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		key, value, ok := strings.Cut(line, "=")
+		if !ok || strings.HasPrefix(line, "#") {
+			continue
+		}
+		env[strings.TrimSpace(key)] = strings.Trim(strings.TrimSpace(value), `"'`)
+	}
 }
 
 // laneEnv is what the config itself sets for an app in a lane: its [app.env],

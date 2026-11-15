@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -80,6 +81,40 @@ func phoneEnv(env map[string]string, host string) (map[string]string, map[string
 	return out, ports
 }
 
+// expoDotenv are the files Expo reads into a development Metro's environment,
+// the first winning: .env.development.local, .env.local, .env.development, .env.
+var expoDotenv = []string{".env.development.local", ".env.local", ".env.development", ".env"}
+
+// phoneMetroEnv is the environment the phone Metro starts with: the app's
+// (env files, [app.env], its port on the phone's port), with every address on
+// this machine named by its address on the network.
+//
+// An app with env_out has a file in its directory that holds the lane Metro's
+// localhost addresses, and the phone Metro runs in the same directory, maybe
+// at the same time. Rewriting that file would take the lane's Metro its
+// addresses (and an emulator reaches the host's LAN address only while the
+// network stays). So this Metro reads no .env file at all (EXPO_NO_DOTENV,
+// Expo's documented switch), and gets what those files hold, in Expo's order,
+// through its environment instead, addresses replaced like the rest.
+func phoneMetroEnv(cfg RepoConfig, app App, lane Lane, dir, host string) (map[string]string, map[string]int) {
+	env := map[string]string{}
+	if app.EnvOut != "" {
+		for i := len(expoDotenv) - 1; i >= 0; i-- {
+			readEnvFile(filepath.Join(dir, expoDotenv[i]), env)
+		}
+	}
+	for key, value := range appEnv(cfg, app, lane, dir) {
+		env[key] = value
+	}
+	env, backends := phoneEnv(env, host)
+	if app.EnvOut != "" {
+		env["EXPO_NO_DOTENV"] = "1"
+	}
+	// What Metro tells the dev client about itself, where the machine has several addresses.
+	env["REACT_NATIVE_PACKAGER_HOSTNAME"] = host
+	return env, backends
+}
+
 // answers says whether something on this machine listens on a port for the
 // network, not only for itself. A firewall in between is not seen from here.
 func answers(host string, port int) bool {
@@ -128,9 +163,7 @@ func phone(lane Lane, host string, printOnly bool) (phoneView, error) {
 	app := *expo
 	app.Port += port - expo.port(lane.Slot)
 	dir := appDir(app, lane)
-	env, backends := phoneEnv(appEnv(cfg, app, lane, dir), host)
-	// What Metro tells the dev client about itself, where the machine has several addresses.
-	env["REACT_NATIVE_PACKAGER_HOSTNAME"] = host
+	env, backends := phoneMetroEnv(cfg, app, lane, dir, host)
 	command := cfg.expand(app.Dev, app, lane)
 
 	view := phoneView{URL: fmt.Sprintf("http://%s:%d", host, port), Notes: notes}

@@ -134,3 +134,57 @@ func TestPhoneTakesStack(t *testing.T) {
 		t.Fatalf("stopped %v, want [a]", got)
 	}
 }
+
+// With env_out the phone Metro reads no .env file (its directory's hold the lane
+// Metro's localhost values): it gets what they hold, in Expo's order, the
+// lane's own values and its port through its environment, LAN addresses throughout.
+func TestPhoneMetroEnv(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		".env":                   "SECRET=hunter2\nEXPO_PUBLIC_SUPABASE_URL=http://localhost:54321\nEXPO_PUBLIC_FLAG=from-env\n",
+		".env.local":             "EXPO_PUBLIC_FLAG=from-local\n",
+		".env.development.local": "# Written by kitt up\nEXPO_PUBLIC_API_URL=http://localhost:8030\nRCT_METRO_PORT=8111\n",
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := RepoConfig{Apps: []App{
+		{Name: "api", Kind: "backend", Port: 8000},
+		{Name: "mobile", Kind: "expo", Port: 8081, PortEnv: "RCT_METRO_PORT", EnvOut: ".env.development.local",
+			Env: map[string]string{"EXPO_PUBLIC_API_URL": "http://localhost:{port:api}"}},
+	}}
+	lane := Lane{Name: "three", Slot: 3, Path: dir, Main: dir}
+	app := cfg.Apps[1]
+	app.Port += phonePort(cfg, cfg.Apps[1], lane) - cfg.Apps[1].port(lane.Slot)
+
+	env, backends := phoneMetroEnv(cfg, app, lane, dir, "192.168.1.20")
+	want := map[string]string{
+		"EXPO_NO_DOTENV":                 "1",
+		"REACT_NATIVE_PACKAGER_HOSTNAME": "192.168.1.20",
+		"EXPO_PUBLIC_API_URL":            "http://192.168.1.20:8030",
+		"EXPO_PUBLIC_SUPABASE_URL":       "http://192.168.1.20:54321",
+		"EXPO_PUBLIC_FLAG":               "from-local",
+		"SECRET":                         "hunter2",
+		"RCT_METRO_PORT":                 "8112",
+	}
+	for key, value := range want {
+		if env[key] != value {
+			t.Errorf("%s = %q, want %q", key, env[key], value)
+		}
+	}
+	if len(env) != len(want) {
+		t.Errorf("env %v: more than expected", env)
+	}
+	if backends["EXPO_PUBLIC_API_URL"] != 8030 || backends["EXPO_PUBLIC_SUPABASE_URL"] != 54321 {
+		t.Errorf("backends %v", backends)
+	}
+
+	// Without env_out nothing changes: Expo reads the .env files itself.
+	app.EnvOut = ""
+	env, _ = phoneMetroEnv(cfg, app, lane, dir, "192.168.1.20")
+	if _, ok := env["EXPO_NO_DOTENV"]; ok || env["EXPO_PUBLIC_SUPABASE_URL"] != "" || env["EXPO_PUBLIC_API_URL"] != "http://192.168.1.20:8030" {
+		t.Errorf("without env_out: %v", env)
+	}
+}
