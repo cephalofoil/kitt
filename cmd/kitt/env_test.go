@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -116,5 +117,37 @@ func TestEnvValue(t *testing.T) {
 		if got := envValue(c.in); got != c.want {
 			t.Errorf("envValue(%q) = %s, want %s", c.in, got, c.want)
 		}
+	}
+}
+
+// Expo reads .env.development.local, .env.local, .env.development, .env in that
+// order: a linked file above env_out wins with the main checkout's values.
+func TestEnvOutOutranked(t *testing.T) {
+	cfg := RepoConfig{Link: []string{"apps/mobile/.env.local", "apps/mobile/.env", "apps/web/.env.development.local", ".env.local"}}
+	mobile := App{Name: "mobile", Kind: "expo", Dir: "apps/mobile"}
+	for _, c := range []struct{ envOut, want string }{
+		{"", ""},
+		{".env.development.local", ""},
+		{".env.development", ".env.local"},
+		{".env.lane", ".env.local .env"},
+	} {
+		mobile.EnvOut = c.envOut
+		if got := strings.Join(envOutOutranked(cfg, mobile), " "); got != c.want {
+			t.Errorf("env_out %q: outranked by %q, want %q", c.envOut, got, c.want)
+		}
+	}
+	mobile.EnvOut = ".env.development"
+	if w := envOutWarning(cfg, mobile); !strings.Contains(w, "linked .env.local before env_out .env.development") || !strings.Contains(w, "name env_out .env.development.local") {
+		t.Errorf("warning %q", w)
+	}
+
+	// The app at the repo's root, and a kind whose bundler kitt cannot tell (Vite and Next differ).
+	root := App{Name: "app", Kind: "expo", Dir: ".", EnvOut: ".env"}
+	if got := strings.Join(envOutOutranked(cfg, root), " "); got != ".env.local" {
+		t.Errorf("an app at the root: %q", got)
+	}
+	root.Kind = "web"
+	if got := envOutOutranked(cfg, root); got != nil {
+		t.Errorf("a web app: %v", got)
 	}
 }

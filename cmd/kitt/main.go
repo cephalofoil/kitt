@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 )
 
 const usage = `kitt — lanes for parallel work
@@ -140,6 +141,11 @@ func cmdDoctor([]string) error {
 	line(hasHerdr(), "herdr up", "the herdr server answers")
 	if err := singleSupported(cfg); err != nil {
 		line(false, "stack", err.Error()+from)
+	}
+	for _, app := range cfg.Apps {
+		if warning := envOutWarning(cfg, app); warning != "" {
+			line(false, "env_out", app.Name+": "+strings.TrimPrefix(warning, "warning: ")+from)
+		}
 	}
 
 	dir, err := os.MkdirTemp("", "kitt-doctor")

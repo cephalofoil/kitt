@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -109,6 +110,45 @@ func envValue(value string) string {
 		return "'" + value + "'"
 	}
 	return "`" + value + "`"
+}
+
+// envOutOutranked are the files the repo links into an expo app's directory
+// that Expo reads before its env_out file: their values (the main checkout's)
+// win over the lane's. A file Expo does not read at all ranks below every
+// one. Other kinds are left out: a "web" app may be Vite or Next, whose orders
+// differ (Vite puts .env.development over .env.local).
+func envOutOutranked(cfg RepoConfig, app App) []string {
+	if app.Kind != "expo" || app.EnvOut == "" {
+		return nil
+	}
+	rank := func(name string) int {
+		for i, known := range expoDotenv {
+			if name == known {
+				return i
+			}
+		}
+		return len(expoDotenv)
+	}
+	dir := path.Clean(filepath.ToSlash(app.Dir))
+	own := rank(path.Clean(filepath.ToSlash(app.EnvOut)))
+	var above []string
+	for _, link := range cfg.Link {
+		link = path.Clean(filepath.ToSlash(link))
+		if path.Dir(link) == dir && rank(path.Base(link)) < own {
+			above = append(above, path.Base(link))
+		}
+	}
+	return above
+}
+
+// envOutWarning is what `up` and `kitt doctor` say of an env_out file that a
+// linked one outranks, or "".
+func envOutWarning(cfg RepoConfig, app App) string {
+	above := envOutOutranked(cfg, app)
+	if len(above) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("warning: Expo reads linked %s before env_out %s, so the main checkout's values win: name env_out %s", strings.Join(above, ", "), app.EnvOut, expoDotenv[0])
 }
 
 // envOutIgnored says whether git ignores the env_out file. One it does not is
@@ -255,6 +295,9 @@ func upApps(lane Lane, only []string, printOnly, force bool) (lines, restarted [
 			}
 			if !envOutIgnored(path) {
 				lines = append(lines, fmt.Sprintf("%-8s warning: env_out %s is not gitignored", app.Name, app.EnvOut))
+			}
+			if warning := envOutWarning(cfg, app); warning != "" {
+				lines = append(lines, fmt.Sprintf("%-8s %s", app.Name, warning))
 			}
 		}
 		if workspace == "" {
