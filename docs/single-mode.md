@@ -202,13 +202,14 @@ start (`up`, `focus`, `claim`), or the emulator is pointed at it (`emu`).
 
 ### Why
 
-`[app.env]` reaches a dev server as its process environment. Expo merges `.env`,
-`.env.local`, `.env.development.local` and the like into the client bundle over
-`process.env`. A lane whose `.env.local` is linked from the main checkout
-therefore got the main checkout's values (its API URL, its ports) instead of its
-own. `env_out` puts the lane's values into a file the bundler reads. (This is
-the reasoning of #7; for what Expo CLI's loader itself does with a variable
-already in the environment, see the note under [What is written](#what-is-written).)
+`[app.env]` reaches a dev server as its process environment. The premise of
+#7 was that Expo merges `.env`, `.env.local`, `.env.development.local` and the
+like into the client bundle over `process.env`, so a lane whose `.env.local` is
+linked from the main checkout would get the main checkout's values (its API
+URL, its ports) instead of its own. `env_out` puts the lane's values into a
+file the bundler reads. Per its source, Expo CLI's own loader does not do
+that (see the note under [What is written](#what-is-written)); `env_out`
+matters where something else reads the files with them winning.
 
 ### What is written
 
@@ -295,25 +296,28 @@ change has no record, so it is left running with its old environment until a
 ### The phone Metro and env_out
 
 `kitt phone` starts a second Metro in the same app directory as the lane's,
-with every `localhost`/`127.0.0.1` address in its environment replaced by this
-machine's LAN address. The `env_out` file in that directory holds the lane
-Metro's `localhost` values, and both Metros may run at once, so the file is not
-rewritten. For an app with `env_out`, the phone Metro instead starts with
-`EXPO_NO_DOTENV=1` (Expo's documented switch: no `.env` file is read) and with,
-in its environment, lowest first:
+with the app's environment (`appEnv`: its env files, `[app.env]` and
+`port_env`, with the phone Metro's port), every `localhost`/`127.0.0.1`
+address in it replaced by this machine's LAN address, and
+`REACT_NATIVE_PACKAGER_HOSTNAME` set to that address. This is the same for
+every app, `env_out` or not. kitt reads none of the `.env` files in the app's
+directory for it and does not turn off Expo's loading of them.
 
-1. what `.env`, `.env.development`, `.env.local` and `.env.development.local`
-   in the app's directory hold (Expo's order, `.env.development.local`
-   winning; the `env_out` file is one of them);
-2. the app's env files, `[app.env]` and `port_env` (`appEnv`), with the phone
-   Metro's port;
-3. all of that with local addresses replaced by the LAN address, and
-   `REACT_NATIVE_PACKAGER_HOSTNAME` set to it.
+The `env_out` file in that directory holds the lane Metro's `localhost` values,
+and both Metros may run at once, so the file is not rewritten. Expo CLI's
+loader still reads it, but by `@expo/env`'s source (2.6.0, `loadEnvFiles`;
+read, not run) a key the process already has is not overwritten, so the
+LAN values kitt passes win for every key kitt sets.
 
-The `.env` files are read with kitt's own line parser (`KEY=value`, surrounding
-quotes trimmed): no `export`, no multi-line values, no `$VAR` expansion. An app
-without `env_out` is started as before: no `EXPO_NO_DOTENV`, Expo reads its
-`.env` files itself.
+Limits:
+
+- A `localhost` URL that lives only in a `.env` file kitt does not read (not
+  in `[app.env]` or the app's `env_files`) reaches the phone Metro as it is,
+  through Expo's loader, and is not rewritten.
+- Where something other than Expo CLI's loader reads the `env_out` file with
+  the file winning (an `app.config.js` that loads dotenv with `override`,
+  `react-native-dotenv`), the phone Metro gets the lane's `localhost` values
+  from it.
 
 ## Windows
 
@@ -366,7 +370,7 @@ anything.
 | `TestBlockingLease` | only a live hard lease of another lane in the single mode offers the takeover; enter on a lane shows it |
 | `TestStackPortsIncludePhone` | a takeover frees the phone Metro's port once the lane has had one, not when the expo app is kept |
 | `TestPhoneTakesStack` | `kitt phone` takes a soft lease and stops the lane before, fails against a hard one, takes none with `--print`, needs herdr |
-| `TestPhoneMetroEnv` | with `env_out`: `EXPO_NO_DOTENV=1`, the `.env` files' values in Expo's order, the lane's values, the phone port, LAN addresses; without: unchanged |
+| `TestPhoneMetroEnv` | with or without `env_out`: the app's env files, `[app.env]` and the phone port with LAN addresses; no `EXPO_NO_DOTENV`, nothing read from the app dir's `.env` files |
 | `TestRmDropsLease` | `kitt rm` removes the lane's lease and emulator lock |
 | `TestMainCheckoutEntryIsNoLane` | a state entry for the main checkout keeps it the main checkout at slot 0, and the next lane gets slot 1 |
 

@@ -112,6 +112,10 @@ func envValue(value string) string {
 	return "`" + value + "`"
 }
 
+// expoDotenv are the files Expo reads into a development Metro's environment,
+// the first winning: .env.development.local, .env.local, .env.development, .env.
+var expoDotenv = []string{".env.development.local", ".env.local", ".env.development", ".env"}
+
 // envOutOutranked are the files the repo links into an expo app's directory
 // that Expo reads before its env_out file: their values (the main checkout's)
 // win over the lane's. A file Expo does not read at all ranks below every

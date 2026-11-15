@@ -100,8 +100,9 @@ type App struct {
 	Scheme   string            `toml:"scheme"`
 	Package  string            `toml:"package"`
 	// EnvOut is a file, in the app's dir, that `up` writes the lane's [app.env]
-	// and port_env values into: for bundlers that inline env files into the
-	// client bundle and let them win over the process environment (Expo).
+	// and port_env values into: for setups that read env files with them
+	// winning over the process environment (Expo CLI's own loader does not, by
+	// its source; an app.config.js using dotenv with override does).
 	EnvOut string `toml:"env_out"`
 }
 
