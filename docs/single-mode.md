@@ -27,7 +27,8 @@ lease_ttl = "20m"   # how long a hard lease holds without a word from its holder
 ```
 
 - `mode`: only the exact string `"single"` turns the single mode on. Without it,
-  every function below does nothing and no lease file is written.
+  every function below does nothing and no lease file is written. On Windows
+  the single mode is refused (see [Windows](#windows)).
 - `keep`: app names. The **stack apps** are all apps that are neither
   `shared = true` nor named in `keep`. Only stack apps are stopped on a takeover.
 - `lease_ttl`: a Go duration (`time.ParseDuration`). Missing, unparsable, zero or
@@ -79,9 +80,12 @@ renewed less than `lease_ttl` ago, and the caller did not pass `--force`.
 | Command | Effect on the lease | Waits | `--force` |
 |---|---|---|---|
 | `kitt up` (not `--print`) | soft, reason `up` | no, fails at once | no |
+| `kitt new --up` | soft, reason `up` | no, fails at once | yes |
 | `kitt focus` (servers on, the default, or `--restart`) | soft, reason `focus` | no, fails at once | yes |
 | `kitt focus --no-up` | none | – | – |
+| `kitt focus --restart --no-up` | refused as a usage error: the two exclude each other | – | – |
 | `kitt emu` | soft, reason `emu` | no, fails at once | yes |
+| `kitt phone` (not `--print`) | soft, reason `phone` | no, fails at once | no |
 | `kitt claim [--reason …]` | hard, reason `claim` or `claim: <text>`, then starts the lane's servers | `--wait`, default 0 | yes |
 | `kitt proof begin` | hard, reason `proof` | `--wait`, default 10m | no |
 | `kitt proof shot`, `kitt proof add` | renews (lease and emulator lock) | – | – |
@@ -89,11 +93,20 @@ renewed less than `lease_ttl` ago, and the caller did not pass `--force`.
 | `kitt release` | hard → soft; servers keep running | – | – |
 | `kitt release --down` | lease file removed, then the lane's stack apps stopped | – | – |
 | `kitt down` | stops the lane's servers, then removes the lease if this lane holds it (hard or soft) | – | – |
+| `kitt rm` | stops the lane's servers, removes the lease if this lane holds it, gives the emulator back | – | – |
 | `kitt who [--json]` | reads only | – | – |
 
-The dashboard's `enter`, `u`, `d` and `e` keys run these commands as their own
-processes, so they follow the same rules. `kitt phone` and `kitt rm` do not touch
-the lease (`kitt rm` stops the lane's servers but leaves a lease it held in place).
+The dashboard's `enter`, `n`, `b`, `u`, `d`, `e` and `x` keys run these commands
+as their own processes, so they follow the same rules; `h` runs `kitt phone`'s
+code in the dashboard's own process, with the same effect on the lease.
+
+When the single mode is on and another lane holds a hard lease that blocks
+(holder alive, renewed within `lease_ttl`), the open-lane dialog (`enter` on a
+lane, `n`, `enter` in the backlog) adds one choice at the end, never the one it
+starts on: `take over the stack (ends <lane>'s <reason>)`. It runs
+`kitt focus <lane> --force` for a lane that exists, or
+`kitt new … --blank --up --focus --force` for one to be made. No other choice
+passes `--force`.
 
 When the lane taking the stack already holds it:
 
@@ -112,14 +125,14 @@ and polls every 3 seconds. When the time is up it fails with:
 the stack of <repo> is held by <name> (<reason>, since <ago>): wait for it (kitt claim --wait 10m), or ask its holder to `kitt release`
 ```
 
-`kitt claim`, `kitt up` and `kitt focus` fail in the single mode when herdr is
-not there:
+`kitt claim`, `kitt up`, `kitt focus` and `kitt phone` fail in the single mode
+when herdr is not there:
 
 ```
 the single mode needs herdr to start and stop a lane's servers (or kitt up --print, and run them yourself)
 ```
 
-`kitt up --print` takes no lease.
+`kitt up --print` and `kitt phone --print` take no lease.
 
 ### Staleness: who the holder is
 
@@ -127,8 +140,9 @@ the single mode needs herdr to start and stop a lane's servers (or kitt up --pri
 a shell made for one command (an agent's tool call) that ends when kitt does, so
 on macOS and Linux kitt takes its **grandparent**: it runs
 `ps -o ppid= -p <parent pid>` and uses the answer when it is a number above 1,
-else the parent. On Windows it uses the parent (see
-[Known limits](#known-limits-as-of-this-branch)).
+else the parent. On Windows it uses the parent; that is one reason the single
+mode is refused there (see [Windows](#windows)). The emulator lock outside the
+single mode still uses it.
 
 Liveness is `kill(pid, 0)` on Unix (EPERM counts as alive) and
 `OpenProcess` + `GetExitCodeProcess == STILL_ACTIVE` on Windows.
@@ -163,9 +177,11 @@ hard one with `--force`), kitt first writes the new lease under the mutex, then
 stops the old lane's stack. For the old lane's slot:
 
 1. **The dev tab.** The old lane's herdr tabs labelled `dev` or `dev:…` are
-   closed, which ends every server running in them, unless some app that is not
-   a stack app (shared or kept) has a `dev` command and answers on its port; then
-   no tab is closed.
+   closed, which ends every server running in them (the phone Metro of
+   `kitt phone` included), unless some app that is not a stack app (shared or
+   kept) has a `dev` command and answers on its port; then no tab is closed,
+   and the phone Metro's own pane (recorded in `state.json` as `phone_pane`) is
+   closed instead, when the expo app is a stack app.
 2. **Stop lines.** Each stack app's `stop` line runs (`sh -c`, or `cmd /C` on
    Windows) in the app's directory. Its result is reported as `stopped` or
    `stop failed: <first line>`.
@@ -173,7 +189,11 @@ stops the old lane's stack. For the old lane's slot:
    for its port in the old lane's slot to stop answering on `127.0.0.1`. If it
    still answers, kitt asks `lsof -t -iTCP:<port> -sTCP:LISTEN` for the pids and
    kills each one (`os.Process.Kill`, SIGKILL on Unix): `still on <port>: killed <pids>`.
-   When no pid is found it says `still on <port>: stop it by hand`.
+   When no pid is found it says `still on <port>: stop it by hand`. When the
+   lane has had a phone Metro (`phone` or `phone_pane` set in its state) and
+   the expo app is a stack app, its port (`phonePort`: the first port after the
+   lane's Metro that no app has) is freed the same way, as `<app> phone`.
+   Afterwards the lane's phone record is cleared.
 
 These lines are printed under `stopped <old lane>`. Then the new lane's servers
 start (`up`, `focus`, `claim`), or the emulator is pointed at it (`emu`).
@@ -186,7 +206,9 @@ start (`up`, `focus`, `claim`), or the emulator is pointed at it (`emu`).
 `.env.local`, `.env.development.local` and the like into the client bundle over
 `process.env`. A lane whose `.env.local` is linked from the main checkout
 therefore got the main checkout's values (its API URL, its ports) instead of its
-own. `env_out` puts the lane's values into a file the bundler reads.
+own. `env_out` puts the lane's values into a file the bundler reads. (This is
+the reasoning of #7; for what Expo CLI's loader itself does with a variable
+already in the environment, see the note under [What is written](#what-is-written).)
 
 ### What is written
 
@@ -197,8 +219,15 @@ app in herdr, it first writes:
 - a header line `# Written by kitt up for this lane; kitt rewrites it on every start.`
 - the app's `[app.env]` values with the lane's placeholders filled in, and its
   `port_env` set to the lane's port;
-- one `KEY=value` line each, sorted by key; values with spaces, tabs, `#`, quotes,
-  `\` or `$` are double-quoted with `\`, `"` and newlines escaped.
+- one `KEY=value` line each, sorted by key. Values are written for the dotenv
+  parsers bundlers use (the `dotenv` package; Node's `util.parseEnv` in
+  `@expo/env` 2.x), neither of which unescapes `\\` or `\"` inside quotes:
+  every `$` is written `\$` (dotenv-expand expands `$VAR` quoted or not); a
+  value with a line break or CR and no `"` is double-quoted with them as `\n`
+  and `\r` (Node ignores `\r`); any other value with a space, tab, `#`, quote,
+  backtick or line break is double-quoted when it has no `"`, else
+  single-quoted when it has no `'`, else backtick-quoted, as it is (line breaks
+  raw: both parsers read multi-line quoted values). A `\` alone needs no quotes.
 
 Never written: the values of the app's `env_files`. They still reach the process
 environment, but are not copied into `env_out`, since they are secrets as often
@@ -219,6 +248,29 @@ Which file to pick: the one the bundler gives the highest precedence among the
 files present. For Expo in development, `.env.development.local` wins over a
 linked `.env.local`.
 
+For an app of kind `expo`, each time `kitt up` writes `env_out` it also checks
+the repo's `link` list: a linked file in the app's directory that Expo reads
+before `env_out` (order `.env.development.local`, `.env.local`,
+`.env.development`, `.env`; a name not in that list ranks below all four) gives
+
+```
+warning: Expo reads linked .env.local before env_out .env.development, so the main checkout's values win: name env_out .env.development.local
+```
+
+`kitt doctor`, run inside the repo, prints the same. It is a warning, not an
+error. Other kinds are not checked: kitt's `web` may be Vite (which puts
+`.env.development` above `.env.local`) or Next (Expo's order), and kitt cannot
+tell which.
+
+**What `@expo/env` does with the process environment.** Its source (read for
+0.0.5, 0.3.0 and 2.6.0) does not overwrite a variable the process already has:
+a key that kitt passes as the pane's environment wins over every `.env` file.
+By that reading, an `[app.env]` key reaches Expo CLI's Metro with the lane's
+value even without `env_out`; `env_out` matters where something reads the
+files itself (an `app.config.js` that calls `dotenv` with `override`, a babel
+plugin that reads `.env`), or where Metro is started without kitt's
+environment. This was not tried against a running Expo here.
+
 ### Restart on change
 
 When kitt starts an app it records, in `state.json` under the lane's `dev`, the
@@ -231,13 +283,54 @@ then `port_env`). On the next `kitt up` (also via `focus`, `claim`,
   when the hash matches, with `--print`, or without herdr;
 - otherwise restarted: its recorded pane is closed, its stop line runs, its port
   is freed (the same 10 s wait, then kill, as a takeover), and it starts again
-  (`its config changed: restarting`). `focus` reports this as
+  (`its config changed: restarting`). `up` returns the names of the apps it
+  restarted (`upApps`), and `focus` reports them as
   `restarted dev servers: their config changed`.
 
 Since the hash includes the env files' values, editing a linked `.env` also
 restarts the app on the next `up`. An app started by a kitt from before this
 change has no record, so it is left running with its old environment until a
 `kitt down` and `kitt up`.
+
+### The phone Metro and env_out
+
+`kitt phone` starts a second Metro in the same app directory as the lane's,
+with every `localhost`/`127.0.0.1` address in its environment replaced by this
+machine's LAN address. The `env_out` file in that directory holds the lane
+Metro's `localhost` values, and both Metros may run at once, so the file is not
+rewritten. For an app with `env_out`, the phone Metro instead starts with
+`EXPO_NO_DOTENV=1` (Expo's documented switch: no `.env` file is read) and with,
+in its environment, lowest first:
+
+1. what `.env`, `.env.development`, `.env.local` and `.env.development.local`
+   in the app's directory hold (Expo's order, `.env.development.local`
+   winning; the `env_out` file is one of them);
+2. the app's env files, `[app.env]` and `port_env` (`appEnv`), with the phone
+   Metro's port;
+3. all of that with local addresses replaced by the LAN address, and
+   `REACT_NATIVE_PACKAGER_HOSTNAME` set to it.
+
+The `.env` files are read with kitt's own line parser (`KEY=value`, surrounding
+quotes trimmed): no `export`, no multi-line values, no `$VAR` expansion. An app
+without `env_out` is started as before: no `EXPO_NO_DOTENV`, Expo reads its
+`.env` files itself.
+
+## Windows
+
+`[stack] mode = "single"` is refused on Windows: `acquireStack` and
+`needsHerdr` (so `up`, `new --up`, `focus`, `emu`, `phone`, `claim`,
+`proof begin`) fail with
+
+```
+the single mode ([stack] mode = "single") is not supported on Windows yet: kitt can neither tell which session holds the stack nor free a lane's ports there. Remove [stack] from kitt.toml to run lanes in parallel as before
+```
+
+and `kitt doctor`, run inside such a repo, prints it. The reasons: `holderPid`
+has no grandparent lookup there (an agent's one-command shell ends at once, so
+a hard lease is stale at once), and `listeners()` finds no pid on a port, so a
+takeover frees nothing. `kitt up --print`, `kitt who`, `kitt ls`, `release`,
+`proof shot`/`end` and everything in the parallel mode work as before. The
+check reads `onWindows`, a variable, so the tests can set it.
 
 ## Tests
 
@@ -265,10 +358,21 @@ anything.
 | `TestEnvOutRefusesSymlink` | `env_out` that is a symlink is refused and its target is left unchanged |
 | `TestEnvOutIgnoredCheck` | the `git check-ignore` check tells an ignored file from one git would commit |
 | `TestDevHash` | the hash ignores map order and changes with the env or the command |
+| `TestEnvValue` | values with line breaks, quotes, backslashes and `$` are written so dotenv reads them back |
+| `TestEnvOutOutranked` | the Expo order of env files, a linked file above `env_out` named, `web` apps not checked |
+| `TestStackSingleRefusedOnWindows` | on Windows the single mode is refused by `acquireStack` and `needsHerdr`, no lease written; parallel mode and `kitt who` work |
+| `TestFocusRestartNoUpRefused` | `kitt focus --restart --no-up` is a usage error and takes nothing |
+| `TestTakeoverOpening` | another lane's hard lease adds `--force` as the last choice, never the starting one, naming holder and reason, for a lane and a new lane |
+| `TestBlockingLease` | only a live hard lease of another lane in the single mode offers the takeover; enter on a lane shows it |
+| `TestStackPortsIncludePhone` | a takeover frees the phone Metro's port once the lane has had one, not when the expo app is kept |
+| `TestPhoneTakesStack` | `kitt phone` takes a soft lease and stops the lane before, fails against a hard one, takes none with `--print`, needs herdr |
+| `TestPhoneMetroEnv` | with `env_out`: `EXPO_NO_DOTENV=1`, the `.env` files' values in Expo's order, the lane's values, the phone port, LAN addresses; without: unchanged |
+| `TestRmDropsLease` | `kitt rm` removes the lane's lease and emulator lock |
+| `TestMainCheckoutEntryIsNoLane` | a state entry for the main checkout keeps it the main checkout at slot 0, and the next lane gets slot 1 |
 
-Not covered by a test: the takeover's tab closing, stop lines and port killing
-(`stopStack`, `freePort`), the grandparent lookup, `needsHerdr`, and the
-restart-on-change path inside `up`.
+Not covered by a test: the takeover's tab and phone pane closing, stop lines and
+port killing (`stopStack`, `freePort`), the grandparent lookup, and the
+restart-on-change path inside `up` (which needs herdr and a server on the port).
 
 ## Known limits (as of this branch)
 
@@ -284,16 +388,8 @@ restart-on-change path inside `up`.
   for opencode or other agent hosts; if their command runner nests differently,
   the holder may be a process that ends too early (the lease goes stale at once)
   or one that outlives the session (the lease holds until `lease_ttl`).
-- **Windows.** What the code does there:
-  - `holderPid` returns kitt's parent, with no grandparent lookup (it does not
-    shell out to `ps`). When kitt runs in a shell made for one command, that
-    shell ends with kitt, and the hard lease reads as stale right away.
-  - `listeners()` returns nothing, so a port that still answers after 10 seconds
-    is not freed: kitt prints `still on <port>: stop it by hand`. The same happens
-    on macOS and Linux when `lsof` is not installed.
-  - Liveness uses `OpenProcess`; the rest of the lease logic is the same.
-- **`kitt rm`** stops a lane's servers but does not remove a lease that lane
-  holds. A soft one is displaced by the next lane; a hard one blocks until its
-  holder ends or `lease_ttl` passes.
+- **Windows** refuses the single mode (see [Windows](#windows)).
+- **Without `lsof`** on macOS or Linux, a port that still answers after 10
+  seconds is not freed: kitt prints `still on <port>: stop it by hand`.
 - **No `--wait` for `up`, `focus` or `emu`.** They fail at once against a live
   hard lease; only `claim` and `proof begin` wait.
