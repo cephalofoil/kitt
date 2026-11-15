@@ -320,15 +320,8 @@ func (d dash) pressed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		d.openings, d.choice = laneOpenings(*row, loadRepoConfig(row.Main, row.Path))
 		return d, nil
 	case "e":
-		lane := row.Lane
-		d.busy = "emulator → " + row.Name
-		return d, func() tea.Msg {
-			message, err := pointEmulator(lane)
-			if err != nil {
-				return doneMsg(err.Error())
-			}
-			return doneMsg(message)
-		}
+		// Its own process, like enter: in the single mode it takes the stack, which may stop another lane.
+		return start("emulator → "+row.Name, "emu", target)
 	case "g":
 		if !row.Managed {
 			return say(row.Name + " is not a lane yet: press a to adopt it")
@@ -607,8 +600,11 @@ func (d dash) View() string {
 	rows := d.visible()
 
 	var b strings.Builder
-	needs, emulator, hidden := 0, "", 0
+	needs, emulator, hidden, held := 0, "", 0, ""
 	for _, row := range d.rows {
+		if row.Lease != nil && row.Lease.Kind == "hard" {
+			held = row.Name + " (" + row.Lease.Reason + ")"
+		}
 		if !row.Managed {
 			hidden++
 		}
@@ -639,6 +635,9 @@ func (d dash) View() string {
 	third := dim.Render("emulator free")
 	if emulator != "" {
 		third = dim.Render("emulator → ") + cyan.Render(emulator)
+	}
+	if held != "" {
+		third += dim.Render(" · stack held by ") + yellow.Render(held)
 	}
 	info := []string{first, second, third}
 
@@ -952,6 +951,9 @@ func marks(row LaneView) string {
 	}
 	if row.InEmulator {
 		out += cyan.Render("▣")
+	}
+	if row.Lease != nil && row.Lease.Kind == "hard" {
+		out += yellow.Render("⚿")
 	}
 	return out
 }

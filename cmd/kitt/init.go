@@ -320,7 +320,7 @@ What to settle, per app:
 - stop: a command that ends what dev started, when a container outlives its terminal.
 - lazy = true for apps that are not needed for most tickets.
 Also: drop detected apps that are not runnable apps, add apps detection missed (a database, a worker), and never give two apps the same base port.
-For the repo: base, link (gitignored env files to symlink into each lane), [emulator] reverse (ports the phone app reaches on localhost besides the apps' own), [proof] guide (one or two lines: test accounts, local database, what to show).
+For the repo: base, link (gitignored env files to symlink into each lane), [emulator] reverse (ports the phone app reaches on localhost besides the apps' own), [proof] guide (one or two lines: test accounts, local database, what to show), [stack] mode = "single" when the machine cannot run several lanes' servers at once (fixed ports, heavy services), with keep = [apps never stopped].
 
 Rules: keep every key name as in the detected file. Do not invent commands: every command must come from a file you read. Where you are unsure, keep the detected value and add a TOML comment starting with "# unsure:".
 
@@ -397,6 +397,18 @@ func renderConfig(cfg RepoConfig) string {
 			fmt.Fprintf(&b, "# Ports besides the apps' own that the emulator must reach on localhost.\nreverse = [%s]\n", strings.Join(ports, ", "))
 		}
 	}
+	if cfg.Stack.Mode != "" || len(cfg.Stack.Keep) > 0 || cfg.Stack.LeaseTTL != "" {
+		b.WriteString("\n[stack]\n")
+		if cfg.Stack.Mode != "" {
+			fmt.Fprintf(&b, "mode = %s\n", tomlString(cfg.Stack.Mode))
+		}
+		if cfg.Stack.LeaseTTL != "" {
+			fmt.Fprintf(&b, "lease_ttl = %s\n", tomlString(cfg.Stack.LeaseTTL))
+		}
+		if len(cfg.Stack.Keep) > 0 {
+			fmt.Fprintf(&b, "keep = %s\n", quote(cfg.Stack.Keep))
+		}
+	}
 	if cfg.Proof.Guide != "" {
 		fmt.Fprintf(&b, "\n[proof]\nguide = %s\n", tomlString(cfg.Proof.Guide))
 	}
@@ -451,6 +463,7 @@ func renderConfig(cfg RepoConfig) string {
 # Placeholders in dev, stop, setup, checks and env values:
 #   {port} this app's port in the lane · {port:<app>} another app's · {lane} · {slot} · {root} the lane · {main} the main checkout
 # Keys an app can have: port_env, shared, lazy, dev, stop, env_files, setup, checks, and [app.env].
+# [stack] mode = "single" runs one lane's servers at a time (keep = ["db"] never stops those apps).
 `)
 
 	return b.String()
