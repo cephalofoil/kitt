@@ -317,7 +317,7 @@ func (d dash) pressed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		// How it opens is asked first, by what the lane has running already.
 		d.mode, d.pending, d.title = "how", row.Name, "open "
-		d.openings, d.choice = laneOpenings(*row, loadRepoConfig(row.Main, row.Path))
+		d.openings, d.choice = laneOpenings(*row, loadRepoConfig(row.Main, row.Path), blockingLease(row.Repo, row.key()))
 		return d, nil
 	case "e":
 		// Its own process, like enter: in the single mode it takes the stack, which may stop another lane.
@@ -403,7 +403,7 @@ func (d dash) typed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "new":
 			// What the lane is, is typed: how it opens is asked next.
 			d.mode, d.pending, d.title = "how", input, "new lane "
-			d.openings, d.choice = newOpenings(input, repo)
+			d.openings, d.choice = newOpenings(input, repo, blockingLease(repo, ""))
 			return d, nil
 		case "how":
 			return d.open()
@@ -480,23 +480,60 @@ const issueHint = "it reads the issue, builds it, proves it in the app and opens
 
 // newOpenings are the ways a lane that is yet to be made opens, and the one
 // the dialog starts on: an issue is its own prompt, a name is a session.
-func newOpenings(input, repo string) ([]opening, int) {
+// `held` is another lane's hard lease on the repo's stack, if any.
+func newOpenings(input, repo string, held *Lease) ([]opening, int) {
 	args, issue := newArgs(input, repo)
 	with := func(more ...string) []string { return append(append([]string{}, args...), more...) }
 	list := []opening{
 		{"a blank Claude", "the lane and an agent to talk to, no dev servers started", with("--blank", "--focus"), false},
 		{"a blank Claude and the dev servers", "the same, with the lane's apps started on its ports", with("--blank", "--up", "--focus"), false},
 	}
+	chosen := 1
 	if issue {
-		return append(list, opening{"Claude on the issue, through to a pull request", issueHint, with("--up"), false}), 2
+		list, chosen = append(list, opening{"Claude on the issue, through to a pull request", issueHint, with("--up"), false}), 2
+	} else {
+		list = append(list, opening{"Claude with a prompt and the dev servers", "you type what Claude is to do next, then it starts by itself", with("--up"), true})
 	}
-	return append(list, opening{"Claude with a prompt and the dev servers", "you type what Claude is to do next, then it starts by itself", with("--up"), true}), 1
+	if held != nil {
+		list = append(list, takeover(held, with("--blank", "--up", "--focus", "--force")))
+	}
+	return list, chosen
+}
+
+// takeover is the opening that breaks another lane's hard lease with --force.
+// It is only ever offered, last and never chosen by itself, and it says whose
+// test it ends: without it the dev servers above fail against that lease.
+func takeover(held *Lease, args []string) opening {
+	return opening{
+		"take over the stack (ends " + held.Name + "'s " + held.Reason + ")",
+		held.Name + " holds it since " + ago(held.Since) + ": its servers stop and what it is testing fails; the dev servers start here",
+		args, false,
+	}
+}
+
+// blockingLease is the hard lease another lane holds on a repo's stack in the
+// single mode, which only --force gets past; nil when nothing keeps `lane` out.
+func blockingLease(repo, lane string) *Lease {
+	if repo == "" {
+		return nil
+	}
+	ref, err := findRepo(repo)
+	if err != nil {
+		return nil
+	}
+	cfg := loadRepoConfig(ref.Path, "")
+	held, ok := readLease(repo)
+	if !cfg.Stack.single() || !ok || held.Lane == lane || !held.blocks(cfg.Stack.ttl()) {
+		return nil
+	}
+	return &held
 }
 
 // laneOpenings are the ways a lane that exists opens, by what is in it
 // already: a workspace to go to, an agent at work, dev servers of its own.
-// The dialog starts on the least of them that takes the person there.
-func laneOpenings(row LaneView, cfg RepoConfig) ([]opening, int) {
+// The dialog starts on the least of them that takes the person there. `held`
+// is another lane's hard lease on the repo's stack, if any.
+func laneOpenings(row LaneView, cfg RepoConfig, held *Lease) ([]opening, int) {
 	focus := func(more ...string) []string {
 		return append([]string{"focus", row.Repo + "/" + row.Name}, more...)
 	}
@@ -543,6 +580,9 @@ func laneOpenings(row LaneView, cfg RepoConfig) ([]opening, int) {
 		list = append(list, opening{"Claude on the issue, through to a pull request", issueHint, focus("--agent"), false})
 	default:
 		list = append(list, opening{"Claude with a prompt and the dev servers", "you type what Claude is to do next, then it starts by itself", focus(), true})
+	}
+	if held != nil {
+		list = append(list, takeover(held, focus("--force")))
 	}
 	return list, chosen
 }

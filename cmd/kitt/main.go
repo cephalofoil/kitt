@@ -15,7 +15,7 @@ const usage = `kitt — lanes for parallel work
   kitt new <issue|ticket|name>   a new lane: worktree, branch, linked env files, setup
         [--prompt t] [--no-agent]  an issue lane starts an agent on the issue; --prompt gives any lane one
         [--prompt-env VAR]         the prompt from an environment variable (Linear's LINEAR_PROMPT)
-        [--blank] [--up]           a blank agent, whatever the lane is for · its dev servers started
+        [--blank] [--up] [--force]  a blank agent, whatever the lane is for · its dev servers started · past another lane's hold
         [--branch b] [--dir d]     the branch to use instead of branch_prefix + name · the repo by a directory
         [--apps web,admin]         the apps the lane is about, when not the repo's usual ones
         [--name lane]              the lane's name, where the one from the branch is taken

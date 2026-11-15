@@ -321,13 +321,13 @@ func describeRepo(cfg RepoConfig) {
 // --- kitt new ----------------------------------------------------------------
 
 func cmdNew(args []string) error {
-	rest, opts := flags(args, "agent", "blank", "no-agent", "focus", "no-setup", "up")
+	rest, opts := flags(args, "agent", "blank", "no-agent", "focus", "no-setup", "up", "force")
 	var apps []string
 	if opts["apps"] != "" {
 		apps = strings.Split(opts["apps"], ",")
 	}
 	if len(rest) == 0 {
-		return fail("usage: kitt new <issue number | ticket | name> [--repo r | --dir d] [--base ref] [--branch b] [--name lane] [--apps web,admin] [--agent | --blank | --no-agent] [--prompt text | --prompt-env VAR] [--up] [--focus]")
+		return fail("usage: kitt new <issue number | ticket | name> [--repo r | --dir d] [--base ref] [--branch b] [--name lane] [--apps web,admin] [--agent | --blank | --no-agent] [--prompt text | --prompt-env VAR] [--up [--force]] [--focus]")
 	}
 	repo, err := findRepo(opts["repo"])
 	if opts["dir"] != "" && opts["repo"] == "" {
@@ -375,7 +375,7 @@ func cmdNew(args []string) error {
 				}
 			}
 			if opts["up"] != "" {
-				started, err := up(lane, nil, false)
+				started, _, err := upApps(lane, nil, false, opts["force"] != "")
 				for _, line := range started {
 					fmt.Println("  " + line)
 				}
@@ -539,7 +539,7 @@ func cmdNew(args []string) error {
 	}
 	if opts["up"] != "" {
 		// The agent has the lane's shell pane, the dev servers get a tab of their own.
-		started, err := up(lane, nil, false)
+		started, _, err := upApps(lane, nil, false, opts["force"] != "")
 		for _, line := range started {
 			fmt.Println("  " + line)
 		}
