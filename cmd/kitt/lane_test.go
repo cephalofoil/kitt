@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -225,6 +226,32 @@ func TestNewTicketOnlyFromTicketNames(t *testing.T) {
 	}
 	if lane, err := findLane("ENG-7"); err != nil || lane.Name != "eng-7-x" {
 		t.Errorf("findLane(ENG-7) = %q, %v", lane.Name, err)
+	}
+}
+
+// With herdr up but failing (its worktree create, then the agent's workspace),
+// kitt new makes the lane with git, installs it, and only then reports the agent.
+func TestNewSetsUpLaneWhenAgentFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake herdr is a shell script")
+	}
+	w := newLaneWorld(t)
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "herdr"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	on := true
+	herdrFound = &on
+	if err := os.WriteFile(filepath.Join(w.repo, "kitt.toml"), []byte("name = \"r\"\nbase = \"main\"\nsetup = [\"touch installed\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := cmdNew([]string{"tryout", "--repo", "r", "--agent"})
+	if err == nil || !strings.Contains(err.Error(), "could not open") {
+		t.Fatalf("err %v, want the agent's", err)
+	}
+	if !exists(filepath.Join(w.lanePath("tryout"), "installed")) {
+		t.Error("the lane was left without its setup")
 	}
 }
 

@@ -510,11 +510,10 @@ func cmdNew(args []string) error {
 	wantsAgent := opts["agent"] != "" || opts["blank"] != "" || prompt != "" || (entry.Issue > 0 && opts["no-agent"] == "")
 	// The agent opens before the install, which takes minutes: it can be talked
 	// to meanwhile. Its prompt waits, so it does not install over the install.
-	pane := ""
+	// An agent that does not open leaves the lane set up all the same.
+	pane, agentErr := "", error(nil)
 	if wantsAgent && hasHerdr() {
-		if pane, err = openAgent(lane, cfg); err != nil {
-			return err
-		}
+		pane, agentErr = openAgent(lane, cfg)
 	}
 	if opts["no-setup"] == "" {
 		setupLane(lane, cfg)
@@ -523,6 +522,9 @@ func cmdNew(args []string) error {
 		if app.Port > 0 {
 			fmt.Printf("  %-8s port %d\n", app.Name, app.port(lane.Slot))
 		}
+	}
+	if agentErr != nil {
+		return agentErr
 	}
 
 	if wantsAgent {
