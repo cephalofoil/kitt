@@ -166,21 +166,17 @@ func startMetro(lane Lane, cfg RepoConfig) []string {
 	port := cfg.expo().port(lane.Slot)
 	wasUp := listening(port)
 	var notes []string
-	lines, err := up(lane, nil, false)
+	_, restarted, err := upApps(lane, nil, false, false)
 	if err != nil {
 		notes = append(notes, "dev servers: "+err.Error())
 	}
-	restarted := false
-	for _, line := range lines {
-		restarted = restarted || strings.HasSuffix(line, "restarting")
-	}
-	if wasUp && !restarted {
+	if wasUp && len(restarted) == 0 {
 		return notes
 	}
 	for waited := 0; waited < 90 && !listening(port); waited += 2 {
 		time.Sleep(2 * time.Second)
 	}
-	if restarted {
+	if len(restarted) > 0 {
 		return append(notes, "restarted dev servers: their config changed")
 	}
 	return append(notes, "started dev servers")

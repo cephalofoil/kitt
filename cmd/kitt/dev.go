@@ -155,8 +155,16 @@ func cmdUp(args []string) error {
 }
 
 func up(lane Lane, only []string, printOnly bool) ([]string, error) {
+	lines, _, err := upApps(lane, only, printOnly, false)
+	return lines, err
+}
+
+// upApps is `up` with what some callers need beyond it: force takes the stack
+// past another lane's hard lease (single mode), and restarted names the apps
+// that were running and started again because their config changed.
+func upApps(lane Lane, only []string, printOnly, force bool) (lines, restarted []string, err error) {
 	if !lane.Managed {
-		return nil, fail("%s is not a lane yet: kitt adopt %s", lane.Name, lane.Name)
+		return nil, nil, fail("%s is not a lane yet: kitt adopt %s", lane.Name, lane.Name)
 	}
 	cfg := loadRepoConfig(lane.Main, lane.Path)
 	// Unnamed, `up` starts the apps the lane is about; any other starts when named.
@@ -179,15 +187,14 @@ func up(lane Lane, only []string, printOnly bool) ([]string, error) {
 		return false
 	}
 
-	var lines []string
 	if cfg.Stack.single() && !printOnly {
 		// One lane's stack at a time: this lane takes it, the one before stops.
 		if err := needsHerdr(cfg); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		_, notes, err := acquireStack(lane, cfg, "soft", "up", 0, false)
+		_, notes, err := acquireStack(lane, cfg, "soft", "up", 0, force)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		lines = append(lines, notes...)
 	}
@@ -219,6 +226,7 @@ func up(lane Lane, only []string, printOnly bool) ([]string, error) {
 			lines = append(lines, stopApps(lane, cfg, []App{app}, false)...)
 			lines = append(lines, freePort(app, port)...)
 			lines = append(lines, fmt.Sprintf("%-8s its config changed: restarting", app.Name))
+			restarted = append(restarted, app.Name)
 		}
 
 		if printOnly || !hasHerdr() {
@@ -245,17 +253,17 @@ func up(lane Lane, only []string, printOnly bool) ([]string, error) {
 		}
 		if workspace == "" {
 			if workspace, _ = herdrOpen(lane, false); workspace == "" {
-				return lines, fail("could not open %s in herdr", lane.Name)
+				return lines, restarted, fail("could not open %s in herdr", lane.Name)
 			}
 		}
 
 		pane, err := devPane(workspace, dir, env)
 		if err != nil {
-			return lines, err
+			return lines, restarted, err
 		}
 		_ = herdr(nil, "pane", "rename", pane, fmt.Sprintf("%s :%d", app.Name, port))
 		if err := herdr(nil, "pane", "run", pane, command); err != nil {
-			return lines, err
+			return lines, restarted, err
 		}
 		recordDev(lane, app.Name, DevStart{Pane: pane, Hash: hash, At: time.Now()})
 		lines = append(lines, fmt.Sprintf("%-8s starting on %d", app.Name, port))
@@ -263,7 +271,7 @@ func up(lane Lane, only []string, printOnly bool) ([]string, error) {
 	if len(lines) == 0 {
 		lines = append(lines, "nothing to start: no app of this repo has a `dev` command")
 	}
-	return lines, nil
+	return lines, restarted, nil
 }
 
 // recordDev keeps how an app was started in the lane's state.
