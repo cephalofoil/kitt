@@ -138,6 +138,9 @@ func cmdDoctor([]string) error {
 		line(false, "device", err.Error()+from)
 	}
 	line(hasHerdr(), "herdr up", "the herdr server answers")
+	if err := singleSupported(cfg); err != nil {
+		line(false, "stack", err.Error()+from)
+	}
 
 	dir, err := os.MkdirTemp("", "kitt-doctor")
 	if err == nil {

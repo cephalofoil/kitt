@@ -37,10 +37,11 @@ type Lease struct {
 
 // What the lease logic reaches outside itself for, so a test can stand in.
 var (
-	stopper = stopStack
-	alive   = processAlive
-	now     = time.Now
-	poll    = 3 * time.Second
+	stopper   = stopStack
+	alive     = processAlive
+	now       = time.Now
+	poll      = 3 * time.Second
+	onWindows = runtime.GOOS == "windows"
 )
 
 func leasePath(repo string) string { return filepath.Join(configDir(), "stack-"+repo+".lock") }
@@ -91,6 +92,9 @@ func holderPid() int {
 func acquireStack(lane Lane, cfg RepoConfig, kind, reason string, wait time.Duration, force bool) (*Lease, []string, error) {
 	if !cfg.Stack.single() {
 		return nil, nil, nil
+	}
+	if err := singleSupported(cfg); err != nil {
+		return nil, nil, err
 	}
 	ttl := cfg.Stack.ttl()
 	// The wait is real time; `now` is the lease's own clock.
@@ -162,9 +166,24 @@ func acquireStack(lane Lane, cfg RepoConfig, kind, reason string, wait time.Dura
 	}
 }
 
+// singleSupported fails where the single mode would take effect on Windows.
+// There kitt cannot tell which session holds a lease (no grandparent lookup:
+// an agent's one-command shell ends at once and the lease is stale) nor find
+// what listens on a port to free it: a mode that does not keep lanes apart is
+// worse than none.
+func singleSupported(cfg RepoConfig) error {
+	if cfg.Stack.single() && onWindows {
+		return fail("the single mode ([stack] mode = \"single\") is not supported on Windows yet: kitt can neither tell which session holds the stack nor free a lane's ports there. Remove [stack] from kitt.toml to run lanes in parallel as before")
+	}
+	return nil
+}
+
 // needsHerdr fails in the single mode without herdr: kitt starts servers only
 // in herdr panes, and a stack it did not start it cannot be sure to stop.
 func needsHerdr(cfg RepoConfig) error {
+	if err := singleSupported(cfg); err != nil {
+		return err
+	}
 	if cfg.Stack.single() && !hasHerdr() {
 		return fail("the single mode needs herdr to start and stop a lane's servers (or kitt up --print, and run them yourself)")
 	}
@@ -337,6 +356,7 @@ func cmdClaim(args []string) error {
 	if !cfg.Stack.single() {
 		return fail("%s runs every lane's stack side by side: there is nothing to claim ([stack] mode = \"single\" in kitt.toml)", lane.Repo)
 	}
+	// needsHerdr also refuses the single mode on Windows.
 	if err := needsHerdr(cfg); err != nil {
 		return err
 	}

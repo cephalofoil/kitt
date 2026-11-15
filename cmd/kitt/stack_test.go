@@ -376,3 +376,47 @@ func captureStdout(t *testing.T, fn func()) string {
 	_, _ = io.Copy(&b, r)
 	return b.String()
 }
+
+// On Windows the single mode is refused where it would take effect, with the
+// way back named; the parallel mode and reading the stack go on as before.
+func TestStackSingleRefusedOnWindows(t *testing.T) {
+	w := newStackWorld(t, "single")
+	old := onWindows
+	onWindows = true
+	t.Cleanup(func() { onWindows = old })
+
+	_, err := w.acquire("a", "soft", 0, false)
+	if err == nil || !strings.Contains(err.Error(), "not supported on Windows") || !strings.Contains(err.Error(), "Remove [stack]") {
+		t.Fatalf("err %v, want the single mode refused on Windows", err)
+	}
+	if exists(leasePath("r")) {
+		t.Fatal("a refused single mode wrote a lease")
+	}
+	if err := needsHerdr(w.cfg); err == nil || !strings.Contains(err.Error(), "Windows") {
+		t.Fatalf("needsHerdr: %v, want the Windows refusal before the herdr one", err)
+	}
+
+	parallel := RepoConfig{Name: "r", Apps: w.cfg.Apps}
+	if _, _, err := acquireStack(w.lane("a"), parallel, "hard", "proof", 0, false); err != nil {
+		t.Fatalf("parallel mode on Windows: %v", err)
+	}
+	if err := singleSupported(parallel); err != nil {
+		t.Fatalf("parallel mode on Windows: %v", err)
+	}
+
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "kitt.toml"), []byte("name = \"r\"\nbase = \"main\"\n[stack]\nmode = \"single\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveGlobal(Global{Repos: []RepoRef{{Name: "r", Path: repo}}}); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() {
+		if err := cmdWho(nil); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(out, "free") {
+		t.Fatalf("kitt who on Windows: %s", out)
+	}
+}
