@@ -239,3 +239,35 @@ func TestRmDropsLease(t *testing.T) {
 		t.Fatal("the removed lane still holds the emulator")
 	}
 }
+
+// A dev server, check or proof of the main checkout gives it a state entry. It
+// stays the main checkout: slot 0, named by its base branch, never a lane of
+// its own, and the next lane still gets slot 1.
+func TestMainCheckoutEntryIsNoLane(t *testing.T) {
+	w := newLaneWorld(t)
+	main, err := findLane("r/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordDev(main, "api", DevStart{Pane: "p1", Hash: "h"})
+	state := loadState()
+	if entry := state.Lanes[main.key()]; entry == nil || entry.Slot != 0 {
+		t.Fatalf("main checkout entry %+v", entry)
+	}
+	if slot := state.freeSlot("r"); slot != 1 {
+		t.Fatalf("free slot %d, want 1", slot)
+	}
+	lanes := lanesOf(RepoRef{Name: "r", Path: w.repo}, state)
+	if len(lanes) != 1 || !lanes[0].IsMain || lanes[0].Slot != 0 || lanes[0].Name != "main" {
+		t.Fatalf("lanes %+v", lanes)
+	}
+	if err := w.new("tryout"); err != nil {
+		t.Fatal(err)
+	}
+	if lane, err := findLane("r/tryout"); err != nil || lane.Slot != 1 {
+		t.Fatalf("the next lane: %+v, %v", lane, err)
+	}
+	if err := cmdRm([]string{"main"}); err == nil {
+		t.Fatal("the main checkout was removed")
+	}
+}
