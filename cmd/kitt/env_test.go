@@ -94,3 +94,27 @@ func TestDevHash(t *testing.T) {
 		t.Fatal("a changed command kept the hash")
 	}
 }
+
+// Each value reads back as it was through dotenv's rules: \n is the only escape
+// inside double quotes, single and backtick quotes take everything as it is,
+// and \$ keeps dotenv-expand off a dollar.
+func TestEnvValue(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"", ""},
+		{"http://localhost:8070", "http://localhost:8070"},
+		{"seven #7", `"seven #7"`},
+		{"two\nlines", `"two\nlines"`},
+		{"cr\r\nlf", `"cr\r\nlf"`},
+		{"say \"hi\"", `'say "hi"'`},
+		{"it's \"x\"", "`it's \"x\"`"},
+		{"line\nwith \"quote\"", "'line\nwith \"quote\"'"},
+		{`C:\dir\bin`, `C:\dir\bin`},
+		{`a b\c`, `"a b\c"`},
+		{"pa$$word", `pa\$\$word`},
+		{"it's $HOME", `"it's \$HOME"`},
+	} {
+		if got := envValue(c.in); got != c.want {
+			t.Errorf("envValue(%q) = %s, want %s", c.in, got, c.want)
+		}
+	}
+}

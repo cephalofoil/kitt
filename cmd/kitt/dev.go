@@ -83,12 +83,26 @@ func writeEnvOut(path string, env map[string]string) error {
 	return os.Rename(tmp, path)
 }
 
-// envValue quotes a value that dotenv would otherwise cut or misread.
+// envValue writes a value so the dotenv parsers bundlers use (the dotenv
+// package; Node's util.parseEnv in newer Expo) read it back unchanged. Neither
+// unescapes \\ or \" inside quotes: a double-quoted value only turns \n (dotenv
+// also \r) into a line break, a single- or backtick-quoted one is taken as it
+// is, line breaks included. A $ is expanded by dotenv-expand, quoted or not,
+// unless written \$.
 func envValue(value string) string {
-	if value == "" || !strings.ContainsAny(value, " \t#\"'\\$") {
+	value = strings.ReplaceAll(value, "$", `\$`)
+	switch {
+	case strings.ContainsAny(value, "\n\r") && !strings.Contains(value, `"`):
+		// Unquoted, a line break would end the line; double quotes bring \n back.
+		return `"` + strings.NewReplacer("\n", `\n`, "\r", `\r`).Replace(value) + `"`
+	case !strings.ContainsAny(value, " \t#\"'`\n\r"):
 		return value
+	case !strings.Contains(value, `"`):
+		return `"` + value + `"`
+	case !strings.Contains(value, "'"):
+		return "'" + value + "'"
 	}
-	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`).Replace(value) + `"`
+	return "`" + value + "`"
 }
 
 // envOutIgnored says whether git ignores the env_out file. One it does not is
