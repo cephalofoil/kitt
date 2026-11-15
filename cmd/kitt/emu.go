@@ -188,6 +188,10 @@ func startMetro(lane Lane, cfg RepoConfig) []string {
 
 func cmdFocus(args []string) error {
 	rest, opts := flags(args, "agent", "blank", "new-agent", "no-up", "restart", "force")
+	if opts["no-up"] != "" && opts["restart"] != "" {
+		// One leaves the servers as they are, the other stops and starts them.
+		return fail("usage: kitt focus [lane] [--no-up | --restart]: --no-up starts nothing, --restart starts the running servers again")
+	}
 	lane, err := findLane(strings.Join(rest, ""))
 	if err != nil {
 		return err
@@ -204,7 +208,7 @@ func cmdFocus(args []string) error {
 	// a lane whose stack another lane's test holds goes no further. A focus
 	// without servers takes no lease.
 	var notes []string
-	if o.Servers || opts["restart"] != "" {
+	if o.Servers {
 		if notes, err = focusStack(lane, cfg, o.Force); err != nil {
 			return err
 		}

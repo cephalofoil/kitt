@@ -420,3 +420,15 @@ func TestStackSingleRefusedOnWindows(t *testing.T) {
 		t.Fatalf("kitt who on Windows: %s", out)
 	}
 }
+
+// --no-up and --restart contradict each other: refused before anything is taken or stopped.
+func TestFocusRestartNoUpRefused(t *testing.T) {
+	w := newStackWorld(t, "single")
+	err := cmdFocus([]string{"a", "--restart", "--no-up"})
+	if err == nil || !strings.Contains(err.Error(), "usage") {
+		t.Fatalf("err %v, want a usage error", err)
+	}
+	if exists(leasePath("r")) || len(w.stops()) != 0 {
+		t.Fatal("a refused focus took the stack")
+	}
+}
