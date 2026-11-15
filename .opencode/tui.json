@@ -1,0 +1,4 @@
+{
+  "$schema": "https://opencode.ai/tui.json",
+  "plugin": [["../opencode/pr-watch/tui.tsx", { "autoRebase": false }]]
+}
