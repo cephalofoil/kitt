@@ -268,28 +268,33 @@ func stopStack(lane Lane, cfg RepoConfig) []string {
 	lines := stopApps(lane, cfg, apps, closeTab)
 
 	for _, app := range apps {
-		port := app.port(lane.Slot)
-		if port <= 0 {
-			continue
-		}
-		for waited := 0; waited < 20 && listening(port); waited++ {
-			time.Sleep(500 * time.Millisecond)
-		}
-		if !listening(port) {
-			continue
-		}
-		if pids := listeners(port); len(pids) > 0 {
-			for _, pid := range pids {
-				if p, err := os.FindProcess(pid); err == nil {
-					_ = p.Kill()
-				}
-			}
-			lines = append(lines, fmt.Sprintf("%-8s still on %d: killed %s", app.Name, port, joinInts(pids)))
-		} else {
-			lines = append(lines, fmt.Sprintf("%-8s still on %d: stop it by hand", app.Name, port))
-		}
+		lines = append(lines, freePort(app, app.port(lane.Slot))...)
 	}
 	return lines
+}
+
+// freePort waits up to ten seconds for an app's port to fall quiet, then kills
+// whatever still listens on it.
+func freePort(app App, port int) []string {
+	if port <= 0 {
+		return nil
+	}
+	for waited := 0; waited < 20 && listening(port); waited++ {
+		time.Sleep(500 * time.Millisecond)
+	}
+	if !listening(port) {
+		return nil
+	}
+	pids := listeners(port)
+	if len(pids) == 0 {
+		return []string{fmt.Sprintf("%-8s still on %d: stop it by hand", app.Name, port)}
+	}
+	for _, pid := range pids {
+		if p, err := os.FindProcess(pid); err == nil {
+			_ = p.Kill()
+		}
+	}
+	return []string{fmt.Sprintf("%-8s still on %d: killed %s", app.Name, port, joinInts(pids))}
 }
 
 // listeners are the pids listening on a port, as lsof sees them.

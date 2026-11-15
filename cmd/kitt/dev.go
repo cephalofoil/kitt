@@ -2,12 +2,15 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // devTab is the one herdr tab of a lane's workspace its dev servers run in,
@@ -34,6 +37,17 @@ func appEnv(cfg RepoConfig, app App, lane Lane, dir string) map[string]string {
 		}
 		file.Close()
 	}
+	for key, value := range laneEnv(cfg, app, lane) {
+		env[key] = value
+	}
+	return env
+}
+
+// laneEnv is what the config itself sets for an app in a lane: its [app.env],
+// expanded, and its port. It is all env_out writes; env files stay unwritten,
+// their values are secrets as often as not.
+func laneEnv(cfg RepoConfig, app App, lane Lane) map[string]string {
+	env := map[string]string{}
 	for key, value := range app.Env {
 		env[key] = cfg.expand(value, app, lane)
 	}
@@ -41,6 +55,58 @@ func appEnv(cfg RepoConfig, app App, lane Lane, dir string) map[string]string {
 		env[app.PortEnv] = strconv.Itoa(app.port(lane.Slot))
 	}
 	return env
+}
+
+func envOutPath(app App, dir string) string {
+	return filepath.Join(dir, filepath.FromSlash(app.EnvOut))
+}
+
+// writeEnvOut writes KEY=value lines, sorted, readable by the owner only, in
+// one step. It never writes through a symlink: a linked env file is the main
+// checkout's, and a lane's ports in it would reach every lane.
+func writeEnvOut(path string, env map[string]string) error {
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fail("env_out %s is a symlink; choose a lane-local file", path)
+	}
+	var b strings.Builder
+	b.WriteString("# Written by kitt up for this lane; kitt rewrites it on every start.\n")
+	for _, key := range sortedKeys(env) {
+		fmt.Fprintf(&b, "%s=%s\n", key, envValue(env[key]))
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp := fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
+	if err := os.WriteFile(tmp, []byte(b.String()), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// envValue quotes a value that dotenv would otherwise cut or misread.
+func envValue(value string) string {
+	if value == "" || !strings.ContainsAny(value, " \t#\"'\\$") {
+		return value
+	}
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`).Replace(value) + `"`
+}
+
+// envOutIgnored says whether git ignores the env_out file. One it does not is
+// committed by the next `git add -A`, ports of one lane and all.
+func envOutIgnored(path string) bool {
+	_, err := run(filepath.Dir(path), "git", "check-ignore", "-q", filepath.Base(path))
+	return err == nil
+}
+
+// devHash names what an app's dev server is started with: the command, the
+// directory, the environment and the env_out file.
+func devHash(command, dir string, app App, env map[string]string) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\x00%s\x00%s\x00", command, dir, app.EnvOut)
+	for _, key := range sortedKeys(env) {
+		fmt.Fprintf(h, "%s=%s\x00", key, env[key])
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
 func appDir(app App, lane Lane) string {
@@ -112,26 +178,56 @@ func up(lane Lane, only []string, printOnly bool) ([]string, error) {
 		lines = append(lines, notes...)
 	}
 	workspace := ""
+	var started map[string]DevStart
+	if entry := loadState().Lanes[lane.key()]; entry != nil {
+		started = entry.Dev
+	}
 	for _, app := range cfg.Apps {
 		if app.Dev == "" || !wanted(app) {
 			continue
 		}
 		port := app.port(lane.Slot)
-		if listening(port) {
-			lines = append(lines, fmt.Sprintf("%-8s already up on %d", app.Name, port))
-			continue
-		}
 		dir := appDir(app, lane)
 		command := cfg.expand(app.Dev, app, lane)
 		env := appEnv(cfg, app, lane, dir)
+		hash := devHash(command, dir, app, env)
+
+		if listening(port) {
+			// Up already: left alone, unless kitt started it with a config that has changed since.
+			last, known := started[app.Name]
+			if !known || last.Hash == hash || printOnly || !hasHerdr() {
+				lines = append(lines, fmt.Sprintf("%-8s already up on %d", app.Name, port))
+				continue
+			}
+			if last.Pane != "" {
+				_ = herdr(nil, "pane", "close", last.Pane)
+			}
+			lines = append(lines, stopApps(lane, cfg, []App{app}, false)...)
+			lines = append(lines, freePort(app, port)...)
+			lines = append(lines, fmt.Sprintf("%-8s its config changed: restarting", app.Name))
+		}
 
 		if printOnly || !hasHerdr() {
-			lines = append(lines, fmt.Sprintf("%-8s cd %s && %s%s", app.Name, dir, envPrefix(env), command))
+			line := fmt.Sprintf("%-8s cd %s && %s%s", app.Name, dir, envPrefix(env), command)
+			if app.EnvOut != "" {
+				line += fmt.Sprintf("  (and writes %s)", envOutPath(app, dir))
+			}
+			lines = append(lines, line)
 			continue
 		}
 		if !ensureSetup(lane, cfg, app) {
 			lines = append(lines, fmt.Sprintf("%-8s not started: its install failed (kitt setup %s)", app.Name, lane.Name))
 			continue
+		}
+		if app.EnvOut != "" {
+			path := envOutPath(app, dir)
+			if err := writeEnvOut(path, laneEnv(cfg, app, lane)); err != nil {
+				lines = append(lines, fmt.Sprintf("%-8s not started: %s", app.Name, err))
+				continue
+			}
+			if !envOutIgnored(path) {
+				lines = append(lines, fmt.Sprintf("%-8s warning: env_out %s is not gitignored", app.Name, app.EnvOut))
+			}
 		}
 		if workspace == "" {
 			if workspace, _ = herdrOpen(lane, false); workspace == "" {
@@ -147,12 +243,29 @@ func up(lane Lane, only []string, printOnly bool) ([]string, error) {
 		if err := herdr(nil, "pane", "run", pane, command); err != nil {
 			return lines, err
 		}
+		recordDev(lane, app.Name, DevStart{Pane: pane, Hash: hash, At: time.Now()})
 		lines = append(lines, fmt.Sprintf("%-8s starting on %d", app.Name, port))
 	}
 	if len(lines) == 0 {
 		lines = append(lines, "nothing to start: no app of this repo has a `dev` command")
 	}
 	return lines, nil
+}
+
+// recordDev keeps how an app was started in the lane's state.
+func recordDev(lane Lane, app string, start DevStart) {
+	_ = updateState(func(s *State) {
+		entry := s.Lanes[lane.key()]
+		if entry == nil {
+			// The main checkout is a lane without an entry until something is kept for it.
+			entry = &LaneState{Repo: lane.Repo, Name: lane.Name, Path: lane.Path, Slot: lane.Slot, Created: time.Now()}
+			s.Lanes[lane.key()] = entry
+		}
+		if entry.Dev == nil {
+			entry.Dev = map[string]DevStart{}
+		}
+		entry.Dev[app] = start
+	})
 }
 
 // devPane makes the pane an app's dev server runs in: the dev tab's first pane,
