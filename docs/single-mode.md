@@ -220,15 +220,20 @@ app in herdr, it first writes:
 - a header line `# Written by kitt up for this lane; kitt rewrites it on every start.`
 - the app's `[app.env]` values with the lane's placeholders filled in, and its
   `port_env` set to the lane's port;
-- one `KEY=value` line each, sorted by key. Values are written for the dotenv
-  parsers bundlers use (the `dotenv` package; Node's `util.parseEnv` in
-  `@expo/env` 2.x), neither of which unescapes `\\` or `\"` inside quotes:
-  every `$` is written `\$` (dotenv-expand expands `$VAR` quoted or not); a
-  value with a line break or CR and no `"` is double-quoted with them as `\n`
-  and `\r` (Node ignores `\r`); any other value with a space, tab, `#`, quote,
-  backtick or line break is double-quoted when it has no `"`, else
-  single-quoted when it has no `'`, else backtick-quoted, as it is (line breaks
-  raw: both parsers read multi-line quoted values). A `\` alone needs no quotes.
+- one `KEY=value` line each, sorted by key. Values are written so dotenv 16
+  with dotenv-expand 11 and `@expo/env` 2.6 (Node's `util.parseEnv`, then its
+  copy of dotenv-expand) read them back as they were. Both expanders run on a
+  value however it is quoted, so every `$` is written `\$` (a `\` right before
+  a `$` that starts a name gets one more). A value with a space, tab, `#`,
+  quote, backtick or line break is quoted: double quotes when it has no `"` and
+  no `\` (inside them both parsers turn `\n` into a line break), else single
+  quotes when it has no `'`, else backticks, else double quotes when it has no
+  `"` and no `\n` or `\r`; line breaks are written as they are, since all three
+  quotings read multi-line values. A value that fits none of these (`'` and a
+  backtick, with `"` or `\n`), a carriage return (dotenv reads it as a line break, Node
+  drops it) or a `\$` after an earlier `$NAME` (the expander leaves what may be
+  its default alone) is not written: `kitt up` does not start that app and says
+  `not started: env_out <path>: <KEY> has ...`.
 
 Never written: the values of the app's `env_files`. They still reach the process
 environment, but are not copied into `env_out`, since they are secrets as often
@@ -362,7 +367,7 @@ anything.
 | `TestEnvOutRefusesSymlink` | `env_out` that is a symlink is refused and its target is left unchanged |
 | `TestEnvOutIgnoredCheck` | the `git check-ignore` check tells an ignored file from one git would commit |
 | `TestDevHash` | the hash ignores map order and changes with the env or the command |
-| `TestEnvValue` | values with line breaks, quotes, backslashes and `$` are written so dotenv reads them back |
+| `TestEnvValue` | the file text for plain, space, `#`, quotes, backtick, `$`, `\$`, line break, `\n`, Windows paths, pinned as checked against dotenv 16.6.1 + dotenv-expand 11.0.7 and `@expo/env` 2.6.0; values no quoting carries are an error naming the key, and nothing is written |
 | `TestEnvOutOutranked` | the Expo order of env files, a linked file above `env_out` named, `web` apps not checked |
 | `TestStackSingleRefusedOnWindows` | on Windows the single mode is refused by `acquireStack` and `needsHerdr`, no lease written; parallel mode and `kitt who` work |
 | `TestFocusRestartNoUpRefused` | `kitt focus --restart --no-up` is a usage error and takes nothing |

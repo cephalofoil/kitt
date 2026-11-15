@@ -78,7 +78,11 @@ func writeEnvOut(path string, env map[string]string) error {
 	var b strings.Builder
 	b.WriteString("# Written by kitt up for this lane; kitt rewrites it on every start.\n")
 	for _, key := range sortedKeys(env) {
-		fmt.Fprintf(&b, "%s=%s\n", key, envValue(env[key]))
+		value, err := envValue(env[key])
+		if err != nil {
+			return fail("env_out %s: %s %s", path, key, err)
+		}
+		fmt.Fprintf(&b, "%s=%s\n", key, value)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -90,26 +94,69 @@ func writeEnvOut(path string, env map[string]string) error {
 	return os.Rename(tmp, path)
 }
 
-// envValue writes a value so the dotenv parsers bundlers use (the dotenv
-// package; Node's util.parseEnv in newer Expo) read it back unchanged. Neither
-// unescapes \\ or \" inside quotes: a double-quoted value only turns \n (dotenv
-// also \r) into a line break, a single- or backtick-quoted one is taken as it
-// is, line breaks included. A $ is expanded by dotenv-expand, quoted or not,
-// unless written \$.
-func envValue(value string) string {
-	value = strings.ReplaceAll(value, "$", `\$`)
-	switch {
-	case strings.ContainsAny(value, "\n\r") && !strings.Contains(value, `"`):
-		// Unquoted, a line break would end the line; double quotes bring \n back.
-		return `"` + strings.NewReplacer("\n", `\n`, "\r", `\r`).Replace(value) + `"`
-	case !strings.ContainsAny(value, " \t#\"'`\n\r"):
-		return value
-	case !strings.Contains(value, `"`):
-		return `"` + value + `"`
-	case !strings.Contains(value, "'"):
-		return "'" + value + "'"
+// envValue writes a value so the dotenv parsers bundlers use (dotenv with
+// dotenv-expand; Node's util.parseEnv with @expo/env's copy of dotenv-expand)
+// read it back unchanged. Inside double quotes both turn \n into a line break
+// (dotenv also \r); single quotes and backticks take everything as it is, line
+// breaks included. The expander then runs on the value however it was quoted:
+// it reads $NAME and ${NAME}, keeps $ written \$ (dropping the backslash of the
+// one that names a variable first), and drops the backslash of every \$ left.
+// A value no quoting carries through, or a CR (dotenv makes it a line break,
+// Node drops it), is an error.
+func envValue(value string) (string, error) {
+	if strings.Contains(value, "\r") {
+		return "", fmt.Errorf("has a carriage return, which dotenv and Expo read back differently")
 	}
-	return "`" + value + "`"
+	var b strings.Builder
+	slashes, named := 0, false
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if c == '\\' {
+			slashes++
+			b.WriteByte(c)
+			continue
+		}
+		if c == '$' {
+			names := envName(value, i+1) || i+1 < len(value) && value[i+1] == '{' && envName(value, i+2)
+			if slashes > 0 && names {
+				if named {
+					// After $NAME or ${NAME, what follows may be its default, which the
+					// expander leaves as it is: the count below would be one too many.
+					return "", fmt.Errorf("has a \\$ after a $, which dotenv-expand reads back differently")
+				}
+				b.WriteByte('\\') // the expander takes one for $NAME, then one for every \$
+			}
+			b.WriteString(`\$`)
+			named = named || names
+		} else {
+			b.WriteByte(c)
+		}
+		slashes = 0
+	}
+	escaped := b.String()
+	switch {
+	case !strings.ContainsAny(escaped, " \t#\"'`\n"):
+		return escaped, nil
+	case !strings.ContainsAny(value, `"\`):
+		return `"` + escaped + `"`, nil
+	case !strings.Contains(value, "'"):
+		return "'" + escaped + "'", nil
+	case !strings.Contains(value, "`"):
+		return "`" + escaped + "`", nil
+	case !strings.Contains(value, `"`) && !strings.Contains(escaped, `\n`) && !strings.Contains(escaped, `\r`):
+		return `"` + escaped + `"`, nil
+	}
+	return "", fmt.Errorf("has ' and ` with \" or \\n, which no dotenv quoting reads back as it is")
+}
+
+// envName says whether a variable name starts at value[i], as dotenv-expand
+// reads one after a $ ([\w.]).
+func envName(value string, i int) bool {
+	if i >= len(value) {
+		return false
+	}
+	c := value[i]
+	return c == '_' || c == '.' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
 }
 
 // expoDotenv are the files Expo reads into a development Metro's environment,

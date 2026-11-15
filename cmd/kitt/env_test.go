@@ -96,27 +96,49 @@ func TestDevHash(t *testing.T) {
 	}
 }
 
-// Each value reads back as it was through dotenv's rules: \n is the only escape
-// inside double quotes, single and backtick quotes take everything as it is,
-// and \$ keeps dotenv-expand off a dollar.
+// What envValue writes for each value, pinned. Every want was read back as the
+// value by dotenv 16.6.1 with dotenv-expand 11.0.7 and by @expo/env 2.6.0's
+// parse (Node 22's util.parseEnv) and expand, as "A=<want>" between other lines;
+// the values with an error have no quoting both read back. Change a want only
+// after checking it against those parsers again.
 func TestEnvValue(t *testing.T) {
 	for _, c := range []struct{ in, want string }{
 		{"", ""},
 		{"http://localhost:8070", "http://localhost:8070"},
-		{"seven #7", `"seven #7"`},
-		{"two\nlines", `"two\nlines"`},
-		{"cr\r\nlf", `"cr\r\nlf"`},
-		{"say \"hi\"", `'say "hi"'`},
-		{"it's \"x\"", "`it's \"x\"`"},
-		{"line\nwith \"quote\"", "'line\nwith \"quote\"'"},
-		{`C:\dir\bin`, `C:\dir\bin`},
-		{`a b\c`, `"a b\c"`},
+		{"a b", `"a b"`},
+		{"seven#7", `"seven#7"`},
+		{"it's", `"it's"`},
+		{`say "hi"`, `'say "hi"'`},
+		{"a`b", "\"a`b\""},
 		{"pa$$word", `pa\$\$word`},
-		{"it's $HOME", `"it's \$HOME"`},
+		{"$HOME/x", `\$HOME/x`},
+		{"${API}", `\${API}`},
+		{`a\$b`, `a\\\$b`},
+		{`cost \$5`, `'cost \\\$5'`},
+		{"two\nlines", "\"two\nlines\""},
+		{`C:\new`, `C:\new`},
+		{`C:\Program Files\node`, `'C:\Program Files\node'`},
+		{`it's "x"`, "`it's \"x\"`"},
+		{"line\nwith \"quote\"", "'line\nwith \"quote\"'"},
 	} {
-		if got := envValue(c.in); got != c.want {
-			t.Errorf("envValue(%q) = %s, want %s", c.in, got, c.want)
+		got, err := envValue(c.in)
+		if err != nil || got != c.want {
+			t.Errorf("envValue(%q) = %s, %v; want %s", c.in, got, err, c.want)
 		}
+	}
+	for _, in := range []string{"it's \"x\" `y`", "it's `y` C:\\n", "cr\rlf", `$A\$B`} {
+		if got, err := envValue(in); err == nil {
+			t.Errorf("envValue(%q) = %s, want an error", in, got)
+		}
+	}
+	// writeEnvOut names the key it cannot write, and writes nothing.
+	path := filepath.Join(t.TempDir(), ".env.development.local")
+	err := writeEnvOut(path, map[string]string{"OK": "1", "BAD": "it's \"x\" `y`"})
+	if err == nil || !strings.Contains(err.Error(), "BAD") {
+		t.Errorf("writeEnvOut: %v, want an error naming BAD", err)
+	}
+	if _, statErr := os.Stat(path); statErr == nil {
+		t.Error("writeEnvOut wrote a file it could not write whole")
 	}
 }
 
