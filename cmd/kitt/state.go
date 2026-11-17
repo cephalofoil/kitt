@@ -23,11 +23,13 @@ type LaneState struct {
 	URL   string `json:"url,omitempty"`
 	// Ticket is a tracker's identifier (Linear's ENG-123), Branch the branch the
 	// lane was made on when it was given one, Prompt what its agent was started with.
-	Ticket  string    `json:"ticket,omitempty"`
-	Branch  string    `json:"branch,omitempty"`
-	Prompt  string    `json:"prompt,omitempty"`
-	Created time.Time `json:"created"`
-	Setup   []string  `json:"setup,omitempty"`
+	Ticket string `json:"ticket,omitempty"`
+	Branch string `json:"branch,omitempty"`
+	Prompt string `json:"prompt,omitempty"`
+	// AgentKind is what the lane's agent last started as (claude, opencode), when it was chosen.
+	AgentKind string    `json:"agent_kind,omitempty"`
+	Created   time.Time `json:"created"`
+	Setup     []string  `json:"setup,omitempty"`
 	// Apps are the apps this lane is about; empty means the repo's usual ones.
 	Apps []string `json:"apps,omitempty"`
 	// Phone is the address of this machine the lane's phone Metro was started

@@ -104,11 +104,12 @@ function laneOpenings(lane, space, hasAgent) {
   if (hasAgent) list.push({ label: "tell Claude something", hint: "you type it next: it goes to the agent at work", args: focus("--no-up"), ask: true });
   else if (issueOf(lane)) list.push({ label: "Claude on the issue, through to a pull request", hint: "it reads the issue, builds it, proves it in the app and opens the PR; the dev servers start", args: focus("--agent") });
   else list.push({ label: "Claude with a prompt and the dev servers", hint: "you type what Claude is to do next, then it starts by itself", args: focus(), ask: true });
+  if (lane.Blocked) list.push(takeover(lane.Blocked, focus("--force")));
   return { list, chosen };
 }
 
 // How a lane that is yet to be made opens: "412 web admin" is an issue and its apps.
-function newOpenings(input, repo) {
+function newOpenings(input, repo, held) {
   const words = input.trim().split(/\s+/).filter(Boolean);
   const issue = /^\d+$/.test(words[0] ?? "");
   const base = issue && words.length > 1
@@ -118,8 +119,41 @@ function newOpenings(input, repo) {
     { label: "a blank Claude", hint: "the lane and an agent to talk to, no dev servers started", args: [...base, "--blank", "--focus"] },
     { label: "a blank Claude and the dev servers", hint: "the same, with the lane's apps started on its ports", args: [...base, "--blank", "--up", "--focus"] },
   ];
-  if (issue) return { list: [...list, { label: "Claude on the issue, through to a pull request", hint: "it reads the issue, builds it, proves it in the app and opens the PR; the dev servers start", args: [...base, "--up"] }], chosen: 2 };
-  return { list: [...list, { label: "Claude with a prompt and the dev servers", hint: "you type what Claude is to do next, then it starts by itself", args: [...base, "--up"], ask: true }], chosen: 1 };
+  const more = held ? [takeover(held, [...base, "--blank", "--up", "--focus", "--force"])] : [];
+  if (issue) return { list: [...list, { label: "Claude on the issue, through to a pull request", hint: "it reads the issue, builds it, proves it in the app and opens the PR; the dev servers start", args: [...base, "--up"] }, ...more], chosen: 2 };
+  return { list: [...list, { label: "Claude with a prompt and the dev servers", hint: "you type what Claude is to do next, then it starts by itself", args: [...base, "--up"], ask: true }, ...more], chosen: 1 };
+}
+
+// The opening that breaks another lane's hard lease (single mode) with --force:
+// offered last, never chosen by itself, and it says whose test it ends.
+function takeover(held, args) {
+  return {
+    label: `take over the stack (ends ${held.name}'s ${held.reason})`,
+    hint: `${held.name} holds it since ${since(held.since)}: its servers stop and what it is testing fails; the dev servers start here`,
+    args,
+  };
+}
+
+function since(at) {
+  const s = Math.max(0, (Date.now() - Date.parse(at)) / 1000);
+  if (!Number.isFinite(s)) return "a while";
+  if (s < 90) return `${Math.round(s)}s`;
+  if (s < 5400) return `${Math.round(s / 60)}m`;
+  return `${Math.round(s / 3600)}h`;
+}
+
+// The agent a lane opens with: the openings are made for the lane's usual kind
+// and worded for the one chosen with tab, as kitt dash does (dash_agent.go).
+const KINDS = ["claude", "opencode"];
+const kindLabel = (k) => (!k || k === "claude" ? "Claude" : k);
+const startsAgent = (o) => Boolean(o.ask || o.args?.[0] === "new" || o.args?.some((a) => a === "--blank" || a === "--agent" || a === "--new-agent"));
+function forKind(list, kind, usual) {
+  return list.map((o) => !startsAgent(o) ? o : {
+    ...o,
+    label: o.label.replaceAll("Claude", kindLabel(kind)),
+    hint: o.hint.replaceAll("Claude", kindLabel(kind)),
+    args: kind && kind !== usual ? [...o.args, "--with", kind] : o.args,
+  });
 }
 
 // Hands a kitt call to the dashboard copy that opened the dialog.
@@ -137,6 +171,14 @@ export default class Kitt extends View {
     this.uid = `kitt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     this.lanes = null; // null: not read yet
     this.repos = [];
+    // The agents the open dialog offers: Claude, and opencode once it answers.
+    this.kinds = ["claude"];
+    cx.spawn(async (cx) => {
+      try {
+        const r = await exec("opencode", ["--version"], { timeout: 20000 });
+        if (r.code === 0) { this.kinds = KINDS; cx.notify(); }
+      } catch {}
+    });
     this.prs = {}; // repo name -> open PRs without a lane
     this.sel = null; // a lane's key or "pr:<repo>#<n>"
     this.busy = []; // labels of kitt calls running
@@ -194,7 +236,7 @@ export default class Kitt extends View {
     try {
       const r = await kitt(["repo", "list", "--json"], { timeout: 20000 });
       if (r.code === 0 && r.stdout.trim().startsWith("[")) {
-        this.repos = JSON.parse(r.stdout).map((x) => ({ name: x.name ?? x.Name, path: x.path ?? x.Path })).filter((x) => x.name);
+        this.repos = JSON.parse(r.stdout).map((x) => ({ name: x.name ?? x.Name, path: x.path ?? x.Path, agent: x.agent || "claude" })).filter((x) => x.name);
         return;
       }
       // An older kitt: its text list names each repo on a line of its own, details indented below.
@@ -312,13 +354,14 @@ export default class Kitt extends View {
     const space = spaceOf(lane, spaces());
     const hasAgent = Boolean(space && agents().some((a) => a.space === space.id)) || Boolean(lane.Agent);
     const { list, chosen } = laneOpenings(lane, space, hasAgent);
-    this.dialog("open", { title: "open", name: lane.Name, lane: slim(lane), options: list, chosen, cwd: this.repoPath(lane.Repo) }, 480, 140 + list.length * 46);
+    const kinds = this.kinds.length > 1 ? 28 : 0;
+    this.dialog("open", { title: "open", name: lane.Name, lane: slim(lane), options: list, chosen, cwd: this.repoPath(lane.Repo), kinds: this.kinds, usual: lane.AgentKind || "claude" }, 480, 140 + kinds + list.length * 46);
   }
 
   newLane(prefill = "") {
     const repo = this.currentRepo();
     if (!repo) return this.say("no repo registered: kitt repo add inside one");
-    this.dialog("new", { repo: repo.name, cwd: repo.path ?? home(), value: prefill }, 480, 236);
+    this.dialog("new", { repo: repo.name, cwd: repo.path ?? home(), value: prefill, kinds: this.kinds, usual: repo.agent ?? "claude", held: this.heldIn(repo.name) }, 480, 236 + (this.kinds.length > 1 ? 28 : 0));
   }
 
   backlog() {
@@ -327,7 +370,12 @@ export default class Kitt extends View {
     const sp = spaces();
     const lanes = (this.lanes ?? []).filter((l) => l.Repo === repo.name && l.Managed && issueOf(l))
       .map((l) => ({ issue: issueOf(l), key: keyOf(l), name: l.Name, space: spaceOf(l, sp)?.id ?? null }));
-    this.dialog("backlog", { repo: repo.name, cwd: repo.path ?? home(), lanes }, 620, 0.75);
+    this.dialog("backlog", { repo: repo.name, cwd: repo.path ?? home(), lanes, kinds: this.kinds, usual: repo.agent ?? "claude", held: this.heldIn(repo.name) }, 620, 0.75);
+  }
+
+  // The hard lease that keeps a new lane of a repo off its stack, if any.
+  heldIn(repo) {
+    return (this.lanes ?? []).find((l) => l.Repo === repo && l.Blocked)?.Blocked ?? null;
   }
 
   currentRepo() {
@@ -642,7 +690,11 @@ export default class Kitt extends View {
   initDialog(cx) {
     const p = this.p;
     this.stage = p.dialog === "new" ? "input" : p.dialog === "backlog" ? "list" : "choose";
-    this.options = p.options ?? [];
+    this.kinds = p.kinds ?? ["claude"];
+    this.usual = p.usual ?? "claude";
+    this.kind = this.usual;
+    this.made = p.options ?? [];
+    this.options = forKind(this.made, this.kind, this.usual);
     this.choice = p.chosen ?? 0;
     this.text = p.value ?? "";
     this.input = InputState.new({ value: this.text, placeholder: p.dialog === "backlog" ? "filter: words, a label or a number" : "issue number (plus apps: 412 web) or a name" });
@@ -679,9 +731,10 @@ export default class Kitt extends View {
     if (this.stage === "input") {
       const input = this.text.trim();
       if (!input) return;
-      const { list, chosen } = newOpenings(input, p.repo);
+      const { list, chosen } = newOpenings(input, p.repo, p.held);
       this.name = input;
-      this.options = list;
+      this.made = list;
+      this.options = forKind(list, this.kind, this.usual);
       this.choice = chosen;
       this.stage = "choose";
       this.handle.focus();
@@ -708,6 +761,12 @@ export default class Kitt extends View {
     }
   }
 
+  nextKind() {
+    if (this.kinds.length < 2) return;
+    this.kind = this.kinds[(this.kinds.indexOf(this.kind) + 1) % this.kinds.length];
+    this.options = forKind(this.made, this.kind, this.usual);
+  }
+
   titleWord() { return this.p.dialog === "open" ? "opening" : "new lane"; }
   laneName() { return this.p.name ?? this.name ?? ""; }
 
@@ -721,10 +780,12 @@ export default class Kitt extends View {
     }
     const base = ["new", String(issue.number), "--repo", this.p.repo];
     this.name = `#${issue.number} ${issue.title}`;
-    this.options = [
+    this.made = [
       { label: "a blank Claude", hint: "the lane and an agent to talk to, no dev servers started", args: [...base, "--blank", "--focus"] },
       { label: "Claude on the issue, through to a pull request", hint: "it reads the issue, builds it, proves it in the app and opens the PR; the dev servers start", args: [...base, "--up"] },
+      ...(this.p.held ? [takeover(this.p.held, [...base, "--blank", "--up", "--focus", "--force"])] : []),
     ];
+    this.options = forKind(this.made, this.kind, this.usual);
     this.choice = 1;
     this.stage = "choose";
     this.handle.focus();
@@ -752,6 +813,7 @@ export default class Kitt extends View {
       if (k === "down" || k === "j") this.choice = Math.min(n - 1, this.choice + 1);
       else if (k === "up" || k === "k") this.choice = Math.max(0, this.choice - 1);
       else if (k === "enter") this.submit(cx);
+      else if (k === "tab") this.nextKind();
       else if (/^[1-9]$/.test(k) && Number(k) <= n) { this.choice = Number(k) - 1; this.submit(cx); }
       else return;
     } else if (p.dialog === "backlog" && this.stage === "list") {
@@ -816,7 +878,7 @@ export default class Kitt extends View {
     }
 
     if (this.stage === "prompt") {
-      return shell(`${p.dialog === "open" ? "open" : "new lane"} ${this.laneName()}`, "What Claude is to do:")
+      return shell(`${p.dialog === "open" ? "open" : "new lane"} ${this.laneName()}`, `What ${kindLabel(this.kind)} is to do:`)
         .child(field())
         .child(div().flex_1())
         .child(h_flex().justify_end().gap(8)
@@ -861,6 +923,13 @@ export default class Kitt extends View {
           .child(h_flex().gap(8).child(div().flex_none().text_color(t.dim).child(String(i + 1))).child(div().flex_1().min_w(0).truncate().when(on, (el) => el.font_semibold()).child(o.label)))
           .child(div().pl(16).text_size(11.5).text_color(t.dim).child(o.hint));
       })))
+      .when(this.kinds.length > 1, (el) => el.child(h_flex().gap(6).items_center().text_size(12)
+        .child(div().text_color(t.dim).child("agent"))
+        .children(this.kinds.map((k) => div().id(`kind-${k}`).px(8).py(2).rounded(6).cursor_pointer()
+          .when(k === this.kind, (el) => el.bg(t.selected).font_semibold()).when(k !== this.kind, (el) => el.text_color(t.dim).hover((s) => s.bg(t.hover)))
+          .on_click((_e, cx) => { this.kind = k; this.options = forKind(this.made, k, this.usual); cx.notify(); })
+          .child(kindLabel(k))))
+        .child(div().text_size(11).text_color(t.dim).child("tab switches"))))
       .child(div().text_size(11).text_color(t.dim).child(`↑↓ or 1-${this.options.length} · ↵ takes it · esc leaves it`));
   }
 }

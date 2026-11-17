@@ -294,11 +294,21 @@ func (a *appBackend) focusAgent(terminal string) error {
 
 // startAgent starts the agent in a tab of its own: the space's shell is the
 // person's, nothing is typed into it.
-func (a *appBackend) startAgent(space string, lane Lane, kind, _ string, tab string) (string, error) {
+func (a *appBackend) startAgent(space string, lane Lane, kind, _ string, tab string, env map[string]string) (string, error) {
 	if tab == "" {
 		tab = kind
 	}
-	made, err := a.do("tab.new", map[string]any{"name": tab, "space": space, "folder": lane.Path, "argv": []string{kind}, "focus": false})
+	argv := []string{kind}
+	if len(env) > 0 {
+		// The app takes no environment for a terminal: kitt run-env hands it over.
+		file, err := writeRunEnv(runEnv{Dir: lane.Path, Command: kind, Title: kind, Env: env})
+		if err != nil {
+			return "", err
+		}
+		exe, _ := os.Executable()
+		argv = []string{exe, "run-env", file}
+	}
+	made, err := a.do("tab.new", map[string]any{"name": tab, "space": space, "folder": lane.Path, "argv": argv, "focus": false})
 	if err != nil {
 		return "", err
 	}

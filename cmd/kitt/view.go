@@ -291,7 +291,11 @@ func cmdLs(args []string) error {
 			Space   string
 			Servers []server
 			// What the dashboard shows of a lane: its title, the apps it touched, its install state.
-			Title   string
+			Title string
+			// AgentKind is what the lane's agent starts as (claude, opencode).
+			AgentKind string
+			// Blocked is another lane's hard lease that keeps this one off the stack: only --force gets past it.
+			Blocked *Lease `json:",omitempty"`
 			Touched []string
 			IsMain  bool
 			Install string
@@ -312,12 +316,16 @@ func cmdLs(args []string) error {
 			if item.Title == "" && v.PR != nil {
 				item.Title = v.PR.Title
 			}
+			cfg, ok := configs[v.Main]
+			if !ok {
+				cfg = loadRepoConfig(v.Main, "")
+				configs[v.Main] = cfg
+			}
+			item.AgentKind = laneAgentKind(v.Lane, cfg, "")
 			if v.Managed {
-				cfg, ok := configs[v.Main]
-				if !ok {
-					cfg = loadRepoConfig(v.Main, "")
-					configs[v.Main] = cfg
-				}
+				item.Blocked = blockingLease(v.Repo, v.key())
+			}
+			if v.Managed {
 				up := map[string]bool{}
 				for _, name := range v.Up {
 					up[name] = true

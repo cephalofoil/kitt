@@ -17,17 +17,19 @@ const usage = `kitt — lanes for parallel work
         [--prompt t] [--no-agent]  an issue lane starts an agent on the issue; --prompt gives any lane one
         [--prompt-env VAR]         the prompt from an environment variable (Linear's LINEAR_PROMPT)
         [--blank] [--up] [--force]  a blank agent, whatever the lane is for · its dev servers started · past another lane's hold
+        [--with claude|opencode]   the agent to start; the lane keeps it (default: [agent] kind)
         [--branch b] [--dir d]     the branch to use instead of branch_prefix + name · the repo by a directory
         [--apps web,admin]         the apps the lane is about, when not the repo's usual ones
         [--name lane]              the lane's name, where the one from the branch is taken
         [--repo r] [--base ref] [--focus] [--no-setup]
   kitt pr <number>               check an open pull request out as a lane, to look at it before the merge
-  kitt agent [lane] [--prompt t] start the lane's agent, or hand the running one a prompt
+  kitt agent [lane] [--prompt t] [--with k]  start the lane's agent, or hand the running one a prompt
   kitt ls [--all] [--json]       the lanes (--json adds each lane's Space and its Servers)
   kitt backlog [--repo r] [--json]  the repo's open issues, and which of them has a lane
   kitt focus [lane]              go into a lane: its herdr workspace, its dev servers, its app in the emulator
         [--blank | --agent | --prompt t | --new-agent]  with a blank agent, one on its issue, one told t, or one more
         [--no-up | --restart] [--force]  without the servers · with them stopped and started again · past another lane's hold
+        [--with claude|opencode]   the agent to start, kept for the lane
   kitt up [lane] [app...]        start the lane's dev servers on its own ports
   kitt down [lane]               stop them
   kitt emu [lane] [--force]      point the emulator at the lane's Metro
@@ -54,6 +56,7 @@ const usage = `kitt — lanes for parallel work
         [--home] [--yes]           write into kitt's folder, not the repo · take everything without asking
   kitt detect [path]             print what kitt detects in a repo; registers and writes nothing
   kitt herdr [use app|tui|auto]  which herdr kitt uses and why · set it for good
+  kitt opencode [install|uninstall]  pr-watch and the herdr app's status for opencode: in lanes by themselves, everywhere with install
   kitt doctor                    what kitt needs and whether it is there
   kitt logo                      the dashboard's logo in its variants (KITT_LOGO picks one)
 
@@ -89,7 +92,7 @@ func main() {
 		"emu": cmdEmu, "phone": cmdPhone, "env": cmdEnv, "check": cmdCheck, "proof": cmdProof, "adopt": cmdAdopt, "link": cmdLink,
 		"rm": cmdRm, "agent": cmdAgent, "logo": cmdLogo, "setup": cmdSetup, "pr": cmdPr, "open": cmdOpen, "detect": cmdDetect, "repo": cmdRepo, "init": cmdInit, "doctor": cmdDoctor,
 		"claim": cmdClaim, "release": cmdRelease, "who": cmdWho,
-		"herdr": cmdHerdr, "run-env": cmdRunEnv,
+		"herdr": cmdHerdr, "run-env": cmdRunEnv, "opencode": cmdOpencode,
 	}
 	command, ok := commands[args[0]]
 	if !ok {
@@ -120,6 +123,13 @@ func cmdDoctor([]string) error {
 	} {
 		path, err := exec.LookPath(tool.name)
 		line(err == nil, tool.name, tool.why+"  "+path)
+	}
+	// opencode is a lane agent to choose, not a need: only said when it is there.
+	if path, err := exec.LookPath(kindOpencode); err == nil {
+		line(true, "opencode", "a lane agent (--with opencode); pr-watch comes with it  "+path)
+		if hasTUIIntegration() == "missing" {
+			line(false, "oc status", "the herdr TUI shows opencode's status after: herdr integration install opencode")
+		}
 	}
 	// The phone app runs on an Android emulator through adb or, on a Mac, an iOS
 	// simulator through simctl; one of them is enough.

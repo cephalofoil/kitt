@@ -199,6 +199,9 @@ func cmdFocus(args []string) error {
 		}
 	}
 	cfg := loadRepoConfig(lane.Main, lane.Path)
+	if err := withAgentKind(lane, &cfg, opts["with"]); err != nil {
+		return err
+	}
 	o := focusOpts{Servers: opts["no-up"] == "", Force: opts["force"] != ""}
 	// The stack is taken first, before an agent is started or a server restarted:
 	// a lane whose stack another lane's test holds goes no further. A focus

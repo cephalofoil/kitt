@@ -36,7 +36,8 @@ type herdrBackend interface {
 	focusAgent(pane string) error
 	// startAgent starts an agent of kind in the lane: in its shell pane when
 	// tab is "", else in a new tab of that name. It returns the agent's pane.
-	startAgent(workspace string, lane Lane, kind, name, tab string) (string, error)
+	// env is what the agent needs beyond the lane's shell (agentEnv).
+	startAgent(workspace string, lane Lane, kind, name, tab string, env map[string]string) (string, error)
 	prompt(pane, text string) error
 	// serve runs a dev server in the dev tab, titled title, and returns its pane.
 	serve(workspace, dir string, env map[string]string, title, command string) (string, error)

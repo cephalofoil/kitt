@@ -61,6 +61,8 @@ The agent opens as soon as the worktree is there; the install runs after it, and
 
 An agent put on an issue is told where it ends: the change built and checked, seen working in the app and recorded as a proof, then a pull request that closes the issue and says what the proof shows. It does not merge. `[agent] prompt` in `kitt.toml` replaces that text; `{issue}`, `{title}` and `{url}` are filled in.
 
+The agent is Claude Code unless `[agent] kind` in `kitt.toml` says otherwise. `--with claude|opencode` on `kitt new`, `focus` and `agent` picks one for a lane, and the lane keeps it. In the dashboards' open dialog, tab switches between them. See [opencode](#opencode).
+
 In the dashboard, one row per lane: the apps it has changed files of, the agent's state, uncommitted and behind counts, the PR and its checks, the last proof, which dev servers answer, and which lane the emulator shows.
 
 | Key | |
@@ -252,7 +254,7 @@ Which one kitt drives, first that says:
 
 In the app, a dev server is started as `kitt run-env <file>`: the app takes no environment for a terminal, so kitt writes the server's env to a file only you can read and deletes it as it starts. An agent is prompted with `hc send` once it reports that it is up.
 
-For scripts and mods nothing asks on stdin: `kitt ls --all --json` (with each lane's `Space`, its `Servers` `[{app, port, up, shared}]`, and what the dashboard shows: `Issue`, `Title`, `Touched`, `IsMain`, `Install`), `kitt repo list --json` (`[{name, path}]`), `kitt backlog --repo r --json`, `kitt focus <lane> --blank|--agent|--prompt t|--no-up`, `kitt new <x> --blank|--prompt t [--up]`, `kitt rm <lane>`.
+For scripts and mods nothing asks on stdin: `kitt ls --all --json` (with each lane's `Space`, its `Servers` `[{app, port, up, shared}]`, what the dashboard shows: `Issue`, `Ticket`, `Title`, `Touched`, `IsMain`, `Install`, its `AgentKind`, and `Blocked`, another lane's hard lease that only `--force` gets past), `kitt repo list --json` (`[{name, path, agent}]`), `kitt backlog --repo r --json`, `kitt focus <lane> --blank|--agent|--prompt t|--no-up [--with k] [--force]`, `kitt new <x> --blank|--prompt t [--up] [--with k]`, `kitt rm <lane>`.
 
 ### The dashboard in the app
 
@@ -301,7 +303,22 @@ The branch name sits at the end of the hint line. `/pr-watch` opens the full vie
 
 ### In opencode
 
-`opencode/pr-watch` brings the band, its keys and the tools to opencode. It is experimental, a spike, and not published as a package. `.opencode/` in this repo's root loads it, so anyone who starts opencode inside the kitt repo gets it. Its merge guard is weaker than the mod's: merging is held by opencode's own permission prompt, and that prompt offers "always".
+`opencode/pr-watch` brings the band, its keys (`ctrl+x` then `i` commit, `p` push, `o` rebase, `w` the PR) and the tools (`pr_watch_commit`, `pr_watch_push`, `pr_watch_rebase_and_push`) to opencode. It comes with kitt and is not published as a package; see [opencode](#opencode) for how it gets there. Its merge guard is weaker than the mod's: merging is held by opencode's own permission prompt, and that prompt offers "always".
+
+## opencode
+
+A lane's agent can be [opencode](https://opencode.ai) instead of Claude Code: `kitt new 412 --with opencode`, `kitt focus <lane> --with opencode`, `[agent] kind = "opencode"` for a repo, or tab in the open dialog of `kitt dash` and of the app's dashboard. Both herdrs start it, prompt it and show its state.
+
+kitt starts opencode with `OPENCODE_CONFIG_DIR` set to `opencode/` in kitt's folder. kitt writes two plugins there from its own binary:
+
+- **pr-watch**: the band, its keys and its tools, as above.
+- **kitt-status**: what opencode is doing (working, needs you, idle), for the herdr app. The app knows an agent by the status its program reports with OSC 7501, an escape sequence written to the terminal. Claude Code sends it itself; opencode does not, so this plugin sends it from opencode's events. It keeps quiet in the herdr TUI, which has its own plugin for this (`herdr integration install opencode`; `kitt doctor` says when it is missing).
+
+Nothing goes into the worktree or into opencode's own config, and nothing is downloaded: opencode installs `@opencode-ai/plugin` there itself. In the TUI an opencode agent gets a tab of its own, made with that environment.
+
+For opencode sessions outside lanes, `kitt opencode install` puts both plugins into `~/.config/opencode/kitt/` and adds them to the `plugin` lists of `opencode.json` and `tui.json`. Everything else in those files stays, and the first install keeps a `.kitt-backup` of each. `kitt opencode uninstall` takes them out again, and `kitt opencode` says what is where.
+
+The plugin's parsing and types are shared with the Claude Code mod in `pr-watch/`. `opencode/pr-watch/shared/` holds a copy, so the binary can carry it: `bun run sync` there refreshes it, and a test fails when it drifts.
 
 ## Development
 

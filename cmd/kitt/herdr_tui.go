@@ -152,8 +152,12 @@ func (tuiBackend) focusAgent(pane string) error {
 	return herdr(nil, "agent", "focus", pane)
 }
 
-func (tuiBackend) startAgent(workspace string, lane Lane, kind, name, tab string) (string, error) {
+func (tuiBackend) startAgent(workspace string, lane Lane, kind, name, tab string, env map[string]string) (string, error) {
 	pane := ""
+	// The shell pane has its environment already: an agent that needs more gets a tab made with it.
+	if tab == "" && len(env) > 0 {
+		tab = kind
+	}
 	if tab == "" {
 		devTabs := map[string]bool{}
 		for _, t := range herdrTabs(workspace) {
@@ -176,7 +180,11 @@ func (tuiBackend) startAgent(workspace string, lane Lane, kind, name, tab string
 				ID string `json:"pane_id"`
 			} `json:"root_pane"`
 		}
-		if err := herdr(&created, "tab", "create", "--workspace", workspace, "--cwd", lane.Path, "--label", tab, "--no-focus"); err != nil {
+		args := []string{"tab", "create", "--workspace", workspace, "--cwd", lane.Path, "--label", tab, "--no-focus"}
+		for _, key := range sortedKeys(env) {
+			args = append(args, "--env", key+"="+env[key])
+		}
+		if err := herdr(&created, args...); err != nil {
 			return "", err
 		}
 		pane = created.RootPane.ID

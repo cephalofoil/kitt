@@ -299,10 +299,12 @@ func cmdRepo(args []string) error {
 			type repoRow struct {
 				Name string `json:"name"`
 				Path string `json:"path"`
+				// Agent is the kind a new lane's agent starts as ([agent] kind).
+				Agent string `json:"agent"`
 			}
 			list := []repoRow{}
 			for _, repo := range g.Repos {
-				list = append(list, repoRow{repo.Name, repo.Path})
+				list = append(list, repoRow{repo.Name, repo.Path, loadRepoConfig(repo.Path, "").Agent.Kind})
 			}
 			return json.NewEncoder(os.Stdout).Encode(list)
 		}
@@ -348,6 +350,12 @@ func cmdNew(args []string) error {
 		return err
 	}
 	cfg := loadRepoConfig(repo.Path, "")
+	if opts["with"] != "" {
+		if err := checkAgentKind(opts["with"]); err != nil {
+			return err
+		}
+		cfg.Agent.Kind = opts["with"]
+	}
 
 	prompt := opts["prompt"]
 	if opts["prompt-env"] != "" {
@@ -407,7 +415,7 @@ func cmdNew(args []string) error {
 			return fail("%s has no app named %q", repo.Name, name)
 		}
 	}
-	entry := LaneState{Repo: repo.Name, Created: time.Now(), Apps: apps, Prompt: prompt}
+	entry := LaneState{Repo: repo.Name, Created: time.Now(), Apps: apps, Prompt: prompt, AgentKind: opts["with"]}
 	name := slug(strings.Join(rest, " "), 40)
 	if isNumber(rest[0]) {
 		var issue struct {
@@ -601,16 +609,29 @@ func openAgent(lane Lane, cfg RepoConfig) (string, error) {
 		return "", fail("could not open %s in %s: %v", lane.Name, herdrName(), err)
 	}
 
-	target := ""
+	// An agent of the lane's kind at work is the one; one of another kind keeps
+	// its pane, and this one gets a tab of its own.
+	target, other := "", false
 	for _, agent := range herdrAgents() {
 		if agent.WorkspaceID == workspace && within(agent.Cwd, lane.Path) {
-			target = agent.PaneID
+			if agentIs(agent, cfg.Agent.Kind) {
+				target = agent.PaneID
+			} else {
+				other = true
+			}
 		}
 	}
 	if target == "" {
-		name := agentName(lane.Name)
+		name, tab := agentName(lane.Name), ""
+		if other {
+			tab = cfg.Agent.Kind
+		}
 		fmt.Printf("starting %s as %q\n", cfg.Agent.Kind, name)
-		if target, err = herdrNow().startAgent(workspace, lane, cfg.Agent.Kind, name, ""); err != nil {
+		env, err := agentEnv(cfg.Agent.Kind)
+		if err != nil {
+			return "", err
+		}
+		if target, err = herdrNow().startAgent(workspace, lane, cfg.Agent.Kind, name, tab, env); err != nil {
 			return "", err
 		}
 	}
@@ -638,7 +659,11 @@ func anotherAgent(lane Lane, cfg RepoConfig) (string, error) {
 	}
 	name += suffix
 	fmt.Printf("starting %s as %q\n", cfg.Agent.Kind, name)
-	return herdrNow().startAgent(workspace, lane, cfg.Agent.Kind, name, label)
+	env, err := agentEnv(cfg.Agent.Kind)
+	if err != nil {
+		return "", err
+	}
+	return herdrNow().startAgent(workspace, lane, cfg.Agent.Kind, name, label, env)
 }
 
 // agentPrompt is what a lane's agent is told: the prompt given, else the one
@@ -684,7 +709,11 @@ func cmdAgent(args []string) error {
 	if !hasHerdr() {
 		return fail("an agent needs herdr")
 	}
-	return startAgent(lane, loadRepoConfig(lane.Main, lane.Path), opts["prompt"])
+	cfg := loadRepoConfig(lane.Main, lane.Path)
+	if err := withAgentKind(lane, &cfg, opts["with"]); err != nil {
+		return err
+	}
+	return startAgent(lane, cfg, opts["prompt"])
 }
 
 // linkFiles gives a lane the gitignored files of the main checkout as symlinks,
