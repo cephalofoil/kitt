@@ -1,5 +1,5 @@
-import type { PrWatchCheck, PrWatchGit, PrWatchIssue, PrWatchLog, PrWatchSnapshot } from '../../pr-watch/types'
-import { countBoxes, issueNumber, parseChecks, parseLog } from '../../pr-watch/hooks/parse'
+import type { PrWatchCheck, PrWatchGit, PrWatchIssue, PrWatchLog, PrWatchSnapshot } from './shared/types'
+import { countBoxes, issueNumber, parseChecks, parseLog } from './shared/parse'
 
 // The fixed steps of pr-watch, with nothing of a host in them: the server
 // plugin runs them as tools the model calls, the TUI plugin runs them for a

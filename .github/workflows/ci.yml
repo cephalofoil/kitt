@@ -54,7 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        # The plugin imports from ../../pr-watch, so the whole repo is checked out.
+        # The test of shared/ compares it with ../../pr-watch: the whole repo is checked out.
         working-directory: opencode/pr-watch
     steps:
       - uses: actions/checkout@v4
