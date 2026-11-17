@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -25,6 +26,10 @@ type stackWorld struct {
 
 func newStackWorld(t *testing.T, mode string) *stackWorld {
 	t.Helper()
+	if mode == "single" && runtime.GOOS == "windows" {
+		// kitt refuses the single mode on Windows (singleSupported): nothing here would run.
+		t.Skip("the single mode is refused on Windows")
+	}
 	t.Setenv("KITT_HOME", t.TempDir())
 	w := &stackWorld{t: t, dead: map[int]bool{}, clock: time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)}
 	w.cfg = RepoConfig{Name: "r", Stack: StackCfg{Mode: mode}, Apps: []App{

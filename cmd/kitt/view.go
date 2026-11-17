@@ -270,6 +270,12 @@ func cmdLs(args []string) error {
 	rows := views(true)
 
 	if opts["json"] != "" {
+		type server struct {
+			App    string `json:"app"`
+			Port   int    `json:"port"`
+			Up     bool   `json:"up"`
+			Shared bool   `json:"shared"`
+		}
 		type row struct {
 			Repo, Name, Path, Branch, Agent string
 			Slot, Dirty, Ahead, Behind      int
@@ -281,14 +287,46 @@ func cmdLs(args []string) error {
 			Checks *CheckResult
 			Proof  *ProofState
 			Lease  *Lease
+			// Space is the lane's workspace in the herdr kitt uses (the app's space id), or "".
+			Space   string
+			Servers []server
+			// What the dashboard shows of a lane: its title, the apps it touched, its install state.
+			Title   string
+			Touched []string
+			IsMain  bool
+			Install string
 		}
+		configs := map[string]RepoConfig{}
 		var list []row
 		for _, v := range rows {
 			item := row{Repo: v.Repo, Name: v.Name, Path: v.Path, Branch: v.Branch, Agent: v.Agent, Slot: v.Slot,
-				Dirty: v.Dirty, Ahead: v.Ahead, Behind: v.Behind, Managed: v.Managed, InEmulator: v.InEmulator, PR: v.PR, Lease: v.Lease}
+				Dirty: v.Dirty, Ahead: v.Ahead, Behind: v.Behind, Managed: v.Managed, InEmulator: v.InEmulator, PR: v.PR, Lease: v.Lease,
+				Space: v.Workspace, Servers: []server{}, Touched: v.Touched, IsMain: v.IsMain, Install: v.Install}
+			if item.Touched == nil {
+				item.Touched = []string{}
+			}
 			if v.State != nil {
 				item.Checks, item.Proof = v.State.Checks, v.State.Proof
-				item.Issue, item.Ticket = v.State.Issue, v.State.Ticket
+				item.Issue, item.Ticket, item.Title = v.State.Issue, v.State.Ticket, v.State.Title
+			}
+			if item.Title == "" && v.PR != nil {
+				item.Title = v.PR.Title
+			}
+			if v.Managed {
+				cfg, ok := configs[v.Main]
+				if !ok {
+					cfg = loadRepoConfig(v.Main, "")
+					configs[v.Main] = cfg
+				}
+				up := map[string]bool{}
+				for _, name := range v.Up {
+					up[name] = true
+				}
+				for _, app := range cfg.Apps {
+					if app.Port > 0 && app.Dev != "" {
+						item.Servers = append(item.Servers, server{App: app.Name, Port: app.port(v.Slot), Up: up[app.Name], Shared: app.Shared})
+					}
+				}
 			}
 			list = append(list, item)
 		}

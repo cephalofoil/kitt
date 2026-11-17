@@ -34,10 +34,10 @@ func newLaneWorld(t *testing.T) *laneWorld {
 	for _, key := range []string{"GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"} {
 		t.Setenv(key, "t@example.com")
 	}
-	off := false
-	oldHerdr, oldBases := herdrFound, bases
-	herdrFound, bases = &off, map[string]string{}
-	t.Cleanup(func() { herdrFound, bases = oldHerdr, oldBases })
+	// No herdr at all: picked already, and none.
+	oldPicked, oldUsing, oldBases := herdrPicked, herdrUsing, bases
+	herdrPicked, herdrUsing, bases = true, nil, map[string]string{}
+	t.Cleanup(func() { herdrPicked, herdrUsing, bases = oldPicked, oldUsing, oldBases })
 
 	w := &laneWorld{t: t, root: root, origin: filepath.Join(root, "origin.git"), repo: filepath.Join(root, "r"), seed: filepath.Join(root, "seed")}
 	git(t, root, "init", "-q", "--bare", "-b", "main", w.origin)
@@ -241,8 +241,7 @@ func TestNewSetsUpLaneWhenAgentFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	on := true
-	herdrFound = &on
+	herdrPicked, herdrUsing = true, tuiBackend{}
 	if err := os.WriteFile(filepath.Join(w.repo, "kitt.toml"), []byte("name = \"r\"\nbase = \"main\"\nsetup = [\"touch installed\"]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -12,7 +12,7 @@ import (
 
 const usage = `kitt — lanes for parallel work
 
-  kitt dash [--workspace]        the dashboard (--workspace opens it as a herdr workspace)
+  kitt dash [--workspace]        the dashboard (--workspace opens it as a herdr workspace or app space)
   kitt new <issue|ticket|name>   a new lane: worktree, branch, linked env files, setup
         [--prompt t] [--no-agent]  an issue lane starts an agent on the issue; --prompt gives any lane one
         [--prompt-env VAR]         the prompt from an environment variable (Linear's LINEAR_PROMPT)
@@ -23,7 +23,7 @@ const usage = `kitt — lanes for parallel work
         [--repo r] [--base ref] [--focus] [--no-setup]
   kitt pr <number>               check an open pull request out as a lane, to look at it before the merge
   kitt agent [lane] [--prompt t] start the lane's agent, or hand the running one a prompt
-  kitt ls [--all] [--json]       the lanes
+  kitt ls [--all] [--json]       the lanes (--json adds each lane's Space and its Servers)
   kitt backlog [--repo r] [--json]  the repo's open issues, and which of them has a lane
   kitt focus [lane]              go into a lane: its herdr workspace, its dev servers, its app in the emulator
         [--blank | --agent | --prompt t | --new-agent]  with a blank agent, one on its issue, one told t, or one more
@@ -48,11 +48,12 @@ const usage = `kitt — lanes for parallel work
   kitt link [lane]               link the env files again
   kitt setup [lane]              install what the lane runs and is not installed yet
   kitt rm <lane> [--force]       remove a lane that holds nothing unsaved
-  kitt repo add [path] | list | rm <name>
+  kitt repo add [path] | list [--json] | rm <name>
   kitt init [path]               set a repo up: what kitt detects, shown piece by piece to keep, edit or drop
         [--agent]                  an agent reads the repo first and fills in what detection cannot see
         [--home] [--yes]           write into kitt's folder, not the repo · take everything without asking
   kitt detect [path]             print what kitt detects in a repo; registers and writes nothing
+  kitt herdr [use app|tui|auto]  which herdr kitt uses and why · set it for good
   kitt doctor                    what kitt needs and whether it is there
   kitt logo                      the dashboard's logo in its variants (KITT_LOGO picks one)
 
@@ -65,10 +66,21 @@ the stack over and stop the lane that had it; a proof or a claim holds it until 
 
 A lane is named by its name, <repo>/<name>, its issue number or ticket, or nothing at all
 inside its directory.
+
+kitt works with the herdr TUI (a lane is a workspace) or the herdr app (a lane
+is a space). --herdr=app|tui|auto before the command picks one, else KITT_HERDR,
+else what kitt herdr use set, else auto: the herdr kitt runs inside, else the app
+when it answers, else the TUI. Nothing asks on stdin but kitt init (--yes);
+scripts pass focus --blank|--agent|--prompt t|--no-up and new --blank|--prompt t.
 `
 
 func main() {
-	if len(os.Args) < 2 {
+	args, err := herdrArgs(os.Args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "kitt:", err)
+		os.Exit(2)
+	}
+	if len(args) == 0 {
 		fmt.Print(usage)
 		return
 	}
@@ -77,17 +89,18 @@ func main() {
 		"emu": cmdEmu, "phone": cmdPhone, "env": cmdEnv, "check": cmdCheck, "proof": cmdProof, "adopt": cmdAdopt, "link": cmdLink,
 		"rm": cmdRm, "agent": cmdAgent, "logo": cmdLogo, "setup": cmdSetup, "pr": cmdPr, "open": cmdOpen, "detect": cmdDetect, "repo": cmdRepo, "init": cmdInit, "doctor": cmdDoctor,
 		"claim": cmdClaim, "release": cmdRelease, "who": cmdWho,
+		"herdr": cmdHerdr, "run-env": cmdRunEnv,
 	}
-	command, ok := commands[os.Args[1]]
+	command, ok := commands[args[0]]
 	if !ok {
-		if os.Args[1] == "help" || os.Args[1] == "--help" || os.Args[1] == "-h" {
+		if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 			fmt.Print(usage)
 			return
 		}
-		fmt.Fprintf(os.Stderr, "kitt: unknown command %q\n\n%s", os.Args[1], usage)
+		fmt.Fprintf(os.Stderr, "kitt: unknown command %q\n\n%s", args[0], usage)
 		os.Exit(2)
 	}
-	if err := command(os.Args[2:]); err != nil {
+	if err := command(args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "kitt:", err)
 		os.Exit(1)
 	}
@@ -102,7 +115,8 @@ func cmdDoctor([]string) error {
 		fmt.Printf("%s %-9s %s\n", mark, name, detail)
 	}
 	for _, tool := range []struct{ name, why string }{
-		{"git", "worktrees"}, {"gh", "issues and pull requests"}, {"herdr", "workspaces and agents"},
+		{"git", "worktrees"}, {"gh", "issues and pull requests"}, {"herdr", "the herdr TUI: workspaces and agents"},
+		{"herdr-app", "the herdr app: spaces and agents"}, {"hc", "herdr-core, the herdr app's terminals"},
 	} {
 		path, err := exec.LookPath(tool.name)
 		line(err == nil, tool.name, tool.why+"  "+path)
@@ -138,7 +152,13 @@ func cmdDoctor([]string) error {
 	} else {
 		line(false, "device", err.Error()+from)
 	}
-	line(hasHerdr(), "herdr up", "the herdr server answers")
+	line(tuiAnswers(), "herdr up", "the herdr server answers")
+	line(appAnswers(), "app up", "the herdr app answers")
+	using := "none"
+	if b := herdrNow(); b != nil {
+		using = b.kind()
+	}
+	line(hasHerdr(), "uses", using+" ("+herdrWhyText+")")
 	if err := singleSupported(cfg); err != nil {
 		line(false, "stack", err.Error()+from)
 	}

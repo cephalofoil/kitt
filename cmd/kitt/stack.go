@@ -290,7 +290,9 @@ func stopStack(lane Lane, cfg RepoConfig) []string {
 	entry := loadState().Lanes[lane.key()]
 	if entry != nil && entry.PhonePane != "" && !closeTab && stacksPhone(cfg, apps) {
 		// The dev tab stays for a kept app: the phone Metro's pane in it is closed by itself.
-		_ = herdr(nil, "pane", "close", entry.PhonePane)
+		if hasHerdr() {
+			_ = herdrNow().closePane(entry.PhonePane)
+		}
 	}
 	for _, port := range stackPorts(lane, cfg, apps, entry) {
 		lines = append(lines, freePort(port.name, port.port)...)

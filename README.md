@@ -21,7 +21,7 @@ go build -o ~/.local/bin/kitt ./cmd/kitt     # any directory on PATH; on Windows
 /plugin install lanes@kitt
 ```
 
-`kitt doctor` says what is missing (git, gh, herdr, adb or the iOS simulator, symlinks) and which device kitt would use.
+`kitt doctor` says what is missing (git, gh, herdr or herdr-app and hc, adb or the iOS simulator, symlinks), which herdr kitt uses and which device.
 
 ### On Windows
 
@@ -237,6 +237,36 @@ kitt release                                          # done: the stack stays up
 The single mode is not supported on Windows yet. There kitt can neither tell which session holds a lease nor find what listens on a port to free it, so a lease would not keep lanes apart; every command that would take the stack refuses, and `kitt doctor` says so. Without `[stack]` lanes run in parallel as before; `kitt up --print`, `kitt who` and `kitt ls` work either way.
 
 [docs/single-mode.md](docs/single-mode.md) describes the lease, the takeover and `env_out` as the code has them, and their limits.
+## herdr app
+
+kitt works with the herdr TUI and with the [herdr app](https://herdr.dev) (`herdr-app`, with herdr-core's `hc`), the same commands for both. In the TUI a lane is a workspace; in the app it is a **space** named after the lane, its folder the lane's worktree. The app's sidebar nests a worktree's space under the space of its main checkout, as the TUI lists a repo's lanes under it; kitt opens that repo space (unnamed, so the app calls it after the repo) before the first lane of a repo. Its agent runs in a tab of its own (`claude`, a second one `claude 2`), its dev servers side by side in the `dev` tab, `kitt rm` closes the space, `kitt dash --workspace` opens a space `kitt` running the dashboard.
+
+Which one kitt drives, first that says:
+
+1. `--herdr=app|tui|auto` before the command: `kitt --herdr=app ls --json`
+2. `KITT_HERDR=app|tui|auto`
+3. `kitt herdr use app|tui|auto`, kept in kitt's config
+4. auto: the one kitt runs inside (`HC_TERMINAL_ID` for the app, `HERDR_PANE_ID` for the TUI), else the app when `herdr-app status` answers, else the TUI when its server answers, else none
+
+`kitt herdr` says which one is used and why; `kitt doctor` checks both.
+
+In the app, a dev server is started as `kitt run-env <file>`: the app takes no environment for a terminal, so kitt writes the server's env to a file only you can read and deletes it as it starts. An agent is prompted with `hc send` once it reports that it is up.
+
+For scripts and mods nothing asks on stdin: `kitt ls --all --json` (with each lane's `Space`, its `Servers` `[{app, port, up, shared}]`, and what the dashboard shows: `Issue`, `Title`, `Touched`, `IsMain`, `Install`), `kitt repo list --json` (`[{name, path}]`), `kitt backlog --repo r --json`, `kitt focus <lane> --blank|--agent|--prompt t|--no-up`, `kitt new <x> --blank|--prompt t [--up]`, `kitt rm <lane>`.
+
+### The dashboard in the app
+
+`herdr-app/` holds the dashboard as a view of the app's own: a **kitt** button in the tab bar (or `ctrl-shift-j`) swaps the terminals for the lanes, laid out as `kitt dash` lays them out (the wordmark, one row per lane, the open PRs without a lane, the keys), with the same keys and dialogs. It takes the keyboard as it shows. Picking a tab, `+` or another space goes back to the terminals; going into a lane shows its space.
+
+```
+cp -r herdr-app/mods/kitt herdr-app/mods/kitt-tabs ~/.config/herdr-app/mods/
+cp herdr-app/layouts/kitt.json ~/.config/herdr-app/layouts/
+herdr-app do layout.switch --name kitt
+```
+
+and in `~/.config/herdr-app/keys.json`: `"layout:kitt": { "ctrl-shift-j": "kitt-tabs.toggle" }`.
+
+The layout is the app's `main` with its tab block made a stack (`view`: `main` or `kitt-dash`); `kitt-tabs` is the app's tab bar with the kitt button added. Both are clones of the app's own (0.1.16): after an app update that changes them, clone them again and carry the few marked lines over. `herdr-app/mods/kitt/RECIPE.md` is the brief to build it from scratch.
 
 ## pr-watch
 
