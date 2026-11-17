@@ -4,8 +4,8 @@ import { join } from 'node:path'
 import type { TuiPlugin, TuiPluginModule } from '@opencode-ai/plugin/tui'
 import { createMemo, createSignal, For, type JSX, Show } from 'solid-js'
 
-import { duration, headline, overall } from '../../pr-watch/hooks/parse'
-import type { PrWatchGit, PrWatchSnapshot } from '../../pr-watch/types'
+import { duration, headline, overall } from './shared/parse'
+import type { PrWatchGit, PrWatchSnapshot } from './shared/types'
 import { type Answer, createSteps, runIn, stream, tail, TOOL, why } from './steps'
 
 // The TUI half of pr-watch: the band above the prompt, its keys, and the full

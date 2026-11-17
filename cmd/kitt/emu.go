@@ -134,7 +134,7 @@ func focus(lane Lane, agentPane string, o focusOpts) ([]string, error) {
 		if _, err := herdrOpen(lane, true); err != nil {
 			notes = append(notes, "herdr: "+err.Error())
 		} else if agentPane != "" {
-			_ = herdr(nil, "agent", "focus", agentPane)
+			_ = herdrNow().focusAgent(agentPane)
 		}
 	}
 	if !o.Servers {
@@ -199,6 +199,9 @@ func cmdFocus(args []string) error {
 		}
 	}
 	cfg := loadRepoConfig(lane.Main, lane.Path)
+	if err := withAgentKind(lane, &cfg, opts["with"]); err != nil {
+		return err
+	}
 	o := focusOpts{Servers: opts["no-up"] == "", Force: opts["force"] != ""}
 	// The stack is taken first, before an agent is started or a server restarted:
 	// a lane whose stack another lane's test holds goes no further. A focus
@@ -228,7 +231,7 @@ func cmdFocus(args []string) error {
 			prompt = agentPrompt(lane, cfg, prompt)
 		}
 		if prompt != "" {
-			if err := herdr(nil, "agent", "prompt", pane, prompt); err != nil {
+			if err := herdrNow().prompt(pane, prompt); err != nil {
 				return err
 			}
 			notes = append(notes, "agent is on it")

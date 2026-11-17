@@ -58,6 +58,10 @@ type dash struct {
 	title    string
 	openings []opening
 	choice   int
+	// made are the openings for the lane's usual agent kind; kind is the one
+	// chosen with tab, which the openings are worded for (dash_agent.go).
+	made        []opening
+	kind, usual string
 	// held is the lane a refused removal named, and why it was refused.
 	held   string
 	reason string
@@ -98,24 +102,13 @@ func dashWorkspace() error {
 	if !hasHerdr() {
 		return fail("herdr is not running")
 	}
-	var created struct {
-		Workspace struct {
-			ID string `json:"workspace_id"`
-		} `json:"workspace"`
-		RootPane struct {
-			ID string `json:"pane_id"`
-		} `json:"root_pane"`
-	}
-	home, _ := os.UserHomeDir()
-	if err := herdr(&created, "workspace", "create", "--label", "kitt", "--cwd", home, "--no-focus"); err != nil {
-		return err
-	}
 	// The pane inherits herdr's environment, which may predate kitt on PATH: name the binary.
 	exe, _ := os.Executable()
-	if err := herdr(nil, "pane", "run", created.RootPane.ID, "& '"+exe+"' dash"); err != nil {
+	id, err := herdrNow().dash(exe)
+	if err != nil {
 		return err
 	}
-	fmt.Printf("dashboard is workspace %s (\"kitt\")\n", created.Workspace.ID)
+	fmt.Printf("dashboard is workspace %s (\"kitt\")\n", id)
 	return nil
 }
 
@@ -317,7 +310,9 @@ func (d dash) pressed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		// How it opens is asked first, by what the lane has running already.
 		d.mode, d.pending, d.title = "how", row.Name, "open "
-		d.openings, d.choice = laneOpenings(*row, loadRepoConfig(row.Main, row.Path), blockingLease(row.Repo, row.key()))
+		cfg := loadRepoConfig(row.Main, row.Path)
+		list, chosen := laneOpenings(*row, cfg, blockingLease(row.Repo, row.key()))
+		d.how(list, chosen, laneUsualKind(*row, cfg))
 		return d, nil
 	case "e":
 		// Its own process, like enter: in the single mode it takes the stack, which may stop another lane.
@@ -382,6 +377,12 @@ func (d dash) typed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		d.mode = ""
 		return d, nil
 
+	case tea.KeyTab:
+		if d.mode == "how" {
+			d.nextKind()
+		}
+		return d, nil
+
 	case tea.KeyUp, tea.KeyDown:
 		if d.mode == "how" {
 			step := 1
@@ -403,7 +404,8 @@ func (d dash) typed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "new":
 			// What the lane is, is typed: how it opens is asked next.
 			d.mode, d.pending, d.title = "how", input, "new lane "
-			d.openings, d.choice = newOpenings(input, repo, blockingLease(repo, ""))
+			list, chosen := newOpenings(input, repo, blockingLease(repo, ""))
+			d.how(list, chosen, repoUsualKind(repo))
 			return d, nil
 		case "how":
 			return d.open()
@@ -836,6 +838,9 @@ func (d dash) dialog(width int) string {
 			pointer, line = accent.Render("▸ "), bold.Render(line)
 		}
 		b.WriteString(pointer + line + "\n     " + dim.Render(opening.hint) + "\n")
+	}
+	if line := d.kindLine(); line != "" {
+		b.WriteString("\n" + line + "\n")
 	}
 	b.WriteString("\n" + dim.Render(fmt.Sprintf("↑↓ or 1-%d · enter takes it · esc leaves it", len(d.openings))))
 	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("12")).

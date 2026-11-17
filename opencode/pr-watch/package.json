@@ -1,9 +1,15 @@
 {
   "name": "opencode-pr-watch",
-  "version": "0.0.1",
-  "description": "kitt's pr-watch for opencode: the branch's PR, uncommitted work and rebase state above the prompt",
+  "version": "0.1.0",
+  "description": "pr-watch for opencode: the branch's PR with its checks, uncommitted work and how far it is behind, above the prompt; keys and tools to commit, push and rebase; merging held for you",
   "type": "module",
   "license": "MIT",
+  "author": "cephalofoil",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cephalofoil/kitt.git",
+    "directory": "opencode/pr-watch"
+  },
   "exports": {
     "./server": "./server.ts",
     "./tui": "./tui.tsx"
@@ -12,6 +18,7 @@
     "opencode": "^1.18.0"
   },
   "scripts": {
+    "sync": "bun scripts/sync.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },
@@ -25,5 +32,6 @@
     "@types/bun": "^1.2.0",
     "solid-js": "^1.9.0",
     "typescript": "^5.8.0"
-  }
+  },
+  "private": true
 }

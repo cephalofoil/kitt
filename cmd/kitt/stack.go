@@ -75,11 +75,8 @@ func (l Lease) held() string {
 // the grandparent is the session that made it, a person's terminal or an agent.
 func holderPid() int {
 	parent := os.Getppid()
-	if runtime.GOOS == "windows" {
-		return parent
-	}
-	out, err := run("", "ps", "-o", "ppid=", "-p", strconv.Itoa(parent))
-	if grand, perr := strconv.Atoi(strings.TrimSpace(out)); err == nil && perr == nil && grand > 1 {
+	// Windows keeps the pid of a parent that ended: only a live one counts.
+	if grand := parentOf(parent); grand > 1 && processAlive(grand) {
 		return grand
 	}
 	return parent
@@ -92,9 +89,6 @@ func holderPid() int {
 func acquireStack(lane Lane, cfg RepoConfig, kind, reason string, wait time.Duration, force bool) (*Lease, []string, error) {
 	if !cfg.Stack.single() {
 		return nil, nil, nil
-	}
-	if err := singleSupported(cfg); err != nil {
-		return nil, nil, err
 	}
 	ttl := cfg.Stack.ttl()
 	// The wait is real time; `now` is the lease's own clock.
@@ -166,24 +160,9 @@ func acquireStack(lane Lane, cfg RepoConfig, kind, reason string, wait time.Dura
 	}
 }
 
-// singleSupported fails where the single mode would take effect on Windows.
-// There kitt cannot tell which session holds a lease (no grandparent lookup:
-// an agent's one-command shell ends at once and the lease is stale) nor find
-// what listens on a port to free it: a mode that does not keep lanes apart is
-// worse than none.
-func singleSupported(cfg RepoConfig) error {
-	if cfg.Stack.single() && onWindows {
-		return fail("the single mode ([stack] mode = \"single\") is not supported on Windows yet: kitt can neither tell which session holds the stack nor free a lane's ports there. Remove [stack] from kitt.toml to run lanes in parallel as before")
-	}
-	return nil
-}
-
 // needsHerdr fails in the single mode without herdr: kitt starts servers only
 // in herdr panes, and a stack it did not start it cannot be sure to stop.
 func needsHerdr(cfg RepoConfig) error {
-	if err := singleSupported(cfg); err != nil {
-		return err
-	}
 	if cfg.Stack.single() && !hasHerdr() {
 		return fail("the single mode needs herdr to start and stop a lane's servers (or kitt up --print, and run them yourself)")
 	}
@@ -290,7 +269,9 @@ func stopStack(lane Lane, cfg RepoConfig) []string {
 	entry := loadState().Lanes[lane.key()]
 	if entry != nil && entry.PhonePane != "" && !closeTab && stacksPhone(cfg, apps) {
 		// The dev tab stays for a kept app: the phone Metro's pane in it is closed by itself.
-		_ = herdr(nil, "pane", "close", entry.PhonePane)
+		if hasHerdr() {
+			_ = herdrNow().closePane(entry.PhonePane)
+		}
 	}
 	for _, port := range stackPorts(lane, cfg, apps, entry) {
 		lines = append(lines, freePort(port.name, port.port)...)
@@ -365,15 +346,40 @@ func freePort(name string, port int) []string {
 	return []string{fmt.Sprintf("%-8s still on %d: killed %s", name, port, joinInts(pids))}
 }
 
-// listeners are the pids listening on a port, as lsof sees them.
+// listeners are the pids listening on a port, as lsof sees them (netstat on Windows).
 func listeners(port int) []int {
-	if runtime.GOOS == "windows" {
-		return nil
+	if onWindows {
+		out, _ := run("", "netstat", "-ano", "-p", "TCP")
+		return netstatListeners(out, port)
 	}
 	out, _ := run("", "lsof", "-t", "-iTCP:"+strconv.Itoa(port), "-sTCP:LISTEN")
 	var pids []int
 	for _, field := range strings.Fields(out) {
 		if pid, err := strconv.Atoi(field); err == nil {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
+}
+
+// netstatListeners reads the pids listening on port from `netstat -ano -p TCP`:
+// "  TCP    0.0.0.0:8081    0.0.0.0:0    LISTENING    1234". The state word is
+// localized on some Windows, so a listener is told by its remote port 0.
+func netstatListeners(out string, port int) []int {
+	var pids []int
+	seen := map[int]bool{}
+	want := strconv.Itoa(port)
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) != 5 || !strings.EqualFold(f[0], "TCP") {
+			continue
+		}
+		local, remote := f[1][strings.LastIndex(f[1], ":")+1:], f[2][strings.LastIndex(f[2], ":")+1:]
+		if local != want || remote != "0" {
+			continue
+		}
+		if pid, err := strconv.Atoi(f[4]); err == nil && pid > 0 && !seen[pid] {
+			seen[pid] = true
 			pids = append(pids, pid)
 		}
 	}

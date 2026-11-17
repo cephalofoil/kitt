@@ -142,12 +142,11 @@ func TestPhoneTakesStack(t *testing.T) {
 		t.Fatal(err)
 	}
 	lane := Lane{Repo: "r", Main: dir, Path: dir, Name: "p", Slot: 4, Managed: true}
-	oldHerdr := herdrFound
-	t.Cleanup(func() { herdrFound = oldHerdr })
+	oldPicked, oldUsing := herdrPicked, herdrUsing
+	t.Cleanup(func() { herdrPicked, herdrUsing = oldPicked, oldUsing })
 
 	// Printed only: nothing is started, nothing is taken.
-	off := false
-	herdrFound = &off
+	herdrPicked, herdrUsing = true, nil
 	if _, err := phone(lane, "192.0.2.10", true); err != nil {
 		t.Fatal(err)
 	}
@@ -160,8 +159,7 @@ func TestPhoneTakesStack(t *testing.T) {
 
 	// With herdr (none on PATH, so nothing is opened): another lane's test keeps the phone out.
 	t.Setenv("PATH", "")
-	on := true
-	herdrFound = &on
+	herdrPicked, herdrUsing = true, tuiBackend{}
 	_, _ = w.acquire("a", "hard", 0, false)
 	if _, err := phone(lane, "192.0.2.10", false); err == nil || !strings.Contains(err.Error(), "held by a") {
 		t.Fatalf("against a's hard lease: %v", err)

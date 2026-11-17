@@ -316,12 +316,15 @@ func (d dash) backlogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// An issue that has a lane is gone into; one without gets its lane made.
 		if row := d.laneOfIssue(b.repo, issue.Number); row != nil {
 			d.mode, d.pending, d.title = "how", row.Name, "open "
-			d.openings, d.choice = laneOpenings(*row, loadRepoConfig(row.Main, row.Path), blockingLease(row.Repo, row.key()))
+			cfg := loadRepoConfig(row.Main, row.Path)
+			list, chosen := laneOpenings(*row, cfg, blockingLease(row.Repo, row.key()))
+			d.how(list, chosen, laneUsualKind(*row, cfg))
 			return d, nil
 		}
 		d.mode, d.title = "how", "new lane "
 		d.pending = strings.TrimSpace(cut(fmt.Sprintf("#%d %s", issue.Number, issue.Title), 56))
-		d.openings, d.choice = newOpenings(fmt.Sprint(issue.Number), b.repo, blockingLease(b.repo, ""))
+		list, chosen := newOpenings(fmt.Sprint(issue.Number), b.repo, blockingLease(b.repo, ""))
+		d.how(list, chosen, repoUsualKind(b.repo))
 	}
 	return d, nil
 }

@@ -15,6 +15,8 @@ import (
 
 // Global is kitt's own config: the repos it knows.
 type Global struct {
+	// Herdr is the herdr kitt uses: app, tui, or "" for auto (`kitt herdr use`).
+	Herdr string    `toml:"herdr,omitempty"`
 	Repos []RepoRef `toml:"repo"`
 }
 

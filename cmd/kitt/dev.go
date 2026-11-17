@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// devTab is the one herdr tab of a lane's workspace its dev servers run in,
+// devTab is the one herdr tab of a lane's workspace (or space) its dev servers run in,
 // side by side: what is running for this ticket is one glance.
 const devTab = "dev"
 
@@ -318,7 +318,7 @@ func upApps(lane Lane, only []string, printOnly, force bool) (lines, restarted [
 				continue
 			}
 			if last.Pane != "" {
-				_ = herdr(nil, "pane", "close", last.Pane)
+				_ = herdrNow().closePane(last.Pane)
 			}
 			lines = append(lines, stopApps(lane, cfg, []App{app}, false)...)
 			lines = append(lines, freePort(app.Name, port)...)
@@ -353,16 +353,12 @@ func upApps(lane Lane, only []string, printOnly, force bool) (lines, restarted [
 		}
 		if workspace == "" {
 			if workspace, _ = herdrOpen(lane, false); workspace == "" {
-				return lines, restarted, fail("could not open %s in herdr", lane.Name)
+				return lines, restarted, fail("could not open %s in %s", lane.Name, herdrName())
 			}
 		}
 
-		pane, err := devPane(workspace, dir, env)
+		pane, err := herdrNow().serve(workspace, dir, env, fmt.Sprintf("%s :%d", app.Name, port), command)
 		if err != nil {
-			return lines, restarted, err
-		}
-		_ = herdr(nil, "pane", "rename", pane, fmt.Sprintf("%s :%d", app.Name, port))
-		if err := herdr(nil, "pane", "run", pane, command); err != nil {
 			return lines, restarted, err
 		}
 		recordDev(lane, app.Name, DevStart{Pane: pane, Hash: hash, At: time.Now()})
@@ -383,55 +379,6 @@ func recordDev(lane Lane, app string, start DevStart) {
 		}
 		entry.Dev[app] = start
 	})
-}
-
-// devPane makes the pane an app's dev server runs in: the dev tab's first pane,
-// or a split to the right of its last one. The environment is the pane's own,
-// set as it is created, so no secret is typed into a shell.
-func devPane(workspace, dir string, env map[string]string) (string, error) {
-	var envArgs []string
-	for _, key := range sortedKeys(env) {
-		envArgs = append(envArgs, "--env", key+"="+env[key])
-	}
-
-	tab := ""
-	for _, candidate := range herdrTabs(workspace) {
-		if candidate.Label == devTab {
-			tab = candidate.TabID
-		}
-	}
-	if tab == "" {
-		var created struct {
-			RootPane struct {
-				ID string `json:"pane_id"`
-			} `json:"root_pane"`
-		}
-		args := append([]string{"tab", "create", "--workspace", workspace, "--cwd", dir, "--label", devTab, "--no-focus"}, envArgs...)
-		if err := herdr(&created, args...); err != nil {
-			return "", err
-		}
-		return created.RootPane.ID, nil
-	}
-
-	last := ""
-	for _, pane := range herdrPanes(workspace) {
-		if pane.TabID == tab {
-			last = pane.PaneID
-		}
-	}
-	if last == "" {
-		return "", fail("the dev tab of workspace %s has no pane", workspace)
-	}
-	var split struct {
-		Pane struct {
-			ID string `json:"pane_id"`
-		} `json:"pane"`
-	}
-	args := append([]string{"pane", "split", last, "--direction", "right", "--cwd", dir, "--no-focus"}, envArgs...)
-	if err := herdr(&split, args...); err != nil {
-		return "", err
-	}
-	return split.Pane.ID, nil
 }
 
 // cmdOpen opens a lane's web app in the browser.
@@ -509,13 +456,7 @@ func stopApps(lane Lane, cfg RepoConfig, apps []App, closeTabs bool) []string {
 
 	closed := 0
 	if workspace := herdrWorkspaceOf(lane.Main)[lane.key()]; closeTabs && workspace != "" {
-		for _, tab := range herdrTabs(workspace) {
-			if tab.Label == devTab || strings.HasPrefix(tab.Label, "dev:") {
-				if herdr(nil, "tab", "close", tab.TabID) == nil {
-					closed++
-				}
-			}
-		}
+		closed = herdrNow().stopDev(workspace)
 	}
 
 	// Closing a pane ends what runs in it, but not what that started elsewhere
