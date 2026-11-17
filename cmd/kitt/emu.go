@@ -106,7 +106,7 @@ func focus(lane Lane, agentPane string, servers bool) []string {
 		if _, err := herdrOpen(lane, true); err != nil {
 			notes = append(notes, "herdr: "+err.Error())
 		} else if agentPane != "" {
-			_ = herdr(nil, "agent", "focus", agentPane)
+			_ = herdrNow().focusAgent(agentPane)
 		}
 	}
 	if !servers {
@@ -174,7 +174,7 @@ func cmdFocus(args []string) error {
 			prompt = agentPrompt(lane, cfg, prompt)
 		}
 		if prompt != "" {
-			if err := herdr(nil, "agent", "prompt", pane, prompt); err != nil {
+			if err := herdrNow().prompt(pane, prompt); err != nil {
 				return err
 			}
 			notes = append(notes, "agent is on it")

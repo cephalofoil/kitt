@@ -160,14 +160,9 @@ func phone(lane Lane, host string, printOnly bool) (phoneView, error) {
 	}
 	workspace, _ := herdrOpen(lane, false)
 	if workspace == "" {
-		return view, fail("could not open %s in herdr", lane.Name)
+		return view, fail("could not open %s in %s", lane.Name, herdrName())
 	}
-	pane, err := devPane(workspace, dir, env)
-	if err != nil {
-		return view, err
-	}
-	_ = herdr(nil, "pane", "rename", pane, fmt.Sprintf("%s phone :%d", app.Name, port))
-	if err := herdr(nil, "pane", "run", pane, command); err != nil {
+	if err := herdrNow().serve(workspace, dir, env, fmt.Sprintf("%s phone :%d", app.Name, port), command); err != nil {
 		return view, err
 	}
 	_ = updateState(func(s *State) {

@@ -98,24 +98,13 @@ func dashWorkspace() error {
 	if !hasHerdr() {
 		return fail("herdr is not running")
 	}
-	var created struct {
-		Workspace struct {
-			ID string `json:"workspace_id"`
-		} `json:"workspace"`
-		RootPane struct {
-			ID string `json:"pane_id"`
-		} `json:"root_pane"`
-	}
-	home, _ := os.UserHomeDir()
-	if err := herdr(&created, "workspace", "create", "--label", "kitt", "--cwd", home, "--no-focus"); err != nil {
-		return err
-	}
 	// The pane inherits herdr's environment, which may predate kitt on PATH: name the binary.
 	exe, _ := os.Executable()
-	if err := herdr(nil, "pane", "run", created.RootPane.ID, "& '"+exe+"' dash"); err != nil {
+	id, err := herdrNow().dash(exe)
+	if err != nil {
 		return err
 	}
-	fmt.Printf("dashboard is workspace %s (\"kitt\")\n", created.Workspace.ID)
+	fmt.Printf("dashboard is workspace %s (\"kitt\")\n", id)
 	return nil
 }
 

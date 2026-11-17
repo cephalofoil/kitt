@@ -216,7 +216,7 @@ func (l Lane) hasExpo(cfg RepoConfig) bool {
 // --- kitt repo ---------------------------------------------------------------
 
 func cmdRepo(args []string) error {
-	rest, _ := flags(args)
+	rest, opts := flags(args, "json")
 	sub := "list"
 	if len(rest) > 0 {
 		sub = rest[0]
@@ -272,6 +272,17 @@ func cmdRepo(args []string) error {
 		return saveGlobal(g)
 
 	default:
+		if opts["json"] != "" {
+			type repoRow struct {
+				Name string `json:"name"`
+				Path string `json:"path"`
+			}
+			list := []repoRow{}
+			for _, repo := range g.Repos {
+				list = append(list, repoRow{repo.Name, repo.Path})
+			}
+			return json.NewEncoder(os.Stdout).Encode(list)
+		}
 		if len(g.Repos) == 0 {
 			fmt.Println("no repos registered: run `kitt repo add` inside a repo")
 		}
@@ -357,22 +368,8 @@ func cmdNew(args []string) error {
 
 	workspace := ""
 	if hasHerdr() {
-		var result struct {
-			Workspace struct {
-				ID string `json:"workspace_id"`
-			} `json:"workspace"`
-		}
-		args := []string{"worktree", "create", "--cwd", repo.Path, "--branch", branch, "--base", base,
-			"--path", filepath.ToSlash(path), "--label", name}
-		if opts["focus"] != "" {
-			args = append(args, "--focus")
-		} else {
-			args = append(args, "--no-focus")
-		}
-		if err := herdrTimeout(&result, 60*time.Second, args...); err != nil {
-			fmt.Printf("  herdr could not create it (%v): using git\n", err)
-		} else {
-			workspace = result.Workspace.ID
+		if workspace, err = herdrNow().newWorktree(repo.Path, branch, base, path, name, opts["focus"] != ""); err != nil {
+			fmt.Printf("  %s could not create it (%v): using git\n", herdrName(), err)
 		}
 	}
 	if !exists(path) {
@@ -461,7 +458,7 @@ func startAgent(lane Lane, cfg RepoConfig, prompt string) error {
 func openAgent(lane Lane, cfg RepoConfig) (string, error) {
 	workspace, err := herdrOpen(lane, false)
 	if err != nil || workspace == "" {
-		return "", fail("could not open %s in herdr: %v", lane.Name, err)
+		return "", fail("could not open %s in %s: %v", lane.Name, herdrName(), err)
 	}
 
 	target := ""
@@ -471,28 +468,11 @@ func openAgent(lane Lane, cfg RepoConfig) (string, error) {
 		}
 	}
 	if target == "" {
-		devTabs := map[string]bool{}
-		for _, tab := range herdrTabs(workspace) {
-			if strings.HasPrefix(tab.Label, "dev:") {
-				devTabs[tab.TabID] = true
-			}
-		}
-		pane := ""
-		for _, candidate := range herdrPanes(workspace) {
-			if !devTabs[candidate.TabID] {
-				pane = candidate.PaneID
-				break
-			}
-		}
-		if pane == "" {
-			return "", fail("workspace %s has no shell pane to start an agent in", workspace)
-		}
 		name := agentName(lane.Name)
 		fmt.Printf("starting %s as %q\n", cfg.Agent.Kind, name)
-		if err := herdrTimeout(nil, 90*time.Second, "agent", "start", name, "--kind", cfg.Agent.Kind, "--pane", pane, "--timeout", "60000"); err != nil {
+		if target, err = herdrNow().startAgent(workspace, lane, cfg.Agent.Kind, name, ""); err != nil {
 			return "", err
 		}
-		target = pane
 	}
 	return target, nil
 }
@@ -502,7 +482,7 @@ func openAgent(lane Lane, cfg RepoConfig) (string, error) {
 func anotherAgent(lane Lane, cfg RepoConfig) (string, error) {
 	workspace, err := herdrOpen(lane, false)
 	if err != nil || workspace == "" {
-		return "", fail("could not open %s in herdr: %v", lane.Name, err)
+		return "", fail("could not open %s in %s: %v", lane.Name, herdrName(), err)
 	}
 	count := 1
 	for _, agent := range herdrAgents() {
@@ -510,15 +490,7 @@ func anotherAgent(lane Lane, cfg RepoConfig) (string, error) {
 			count++
 		}
 	}
-	var created struct {
-		RootPane struct {
-			ID string `json:"pane_id"`
-		} `json:"root_pane"`
-	}
 	label := fmt.Sprintf("%s %d", cfg.Agent.Kind, count)
-	if err := herdr(&created, "tab", "create", "--workspace", workspace, "--cwd", lane.Path, "--label", label, "--no-focus"); err != nil {
-		return "", err
-	}
 	// Two agents of a lane are told apart by a number, inside what herdr takes for a name.
 	name, suffix := agentName(lane.Name), fmt.Sprintf("-%d", count)
 	if len(name)+len(suffix) > 32 {
@@ -526,10 +498,7 @@ func anotherAgent(lane Lane, cfg RepoConfig) (string, error) {
 	}
 	name += suffix
 	fmt.Printf("starting %s as %q\n", cfg.Agent.Kind, name)
-	if err := herdrTimeout(nil, 90*time.Second, "agent", "start", name, "--kind", cfg.Agent.Kind, "--pane", created.RootPane.ID, "--timeout", "60000"); err != nil {
-		return "", err
-	}
-	return created.RootPane.ID, nil
+	return herdrNow().startAgent(workspace, lane, cfg.Agent.Kind, name, label)
 }
 
 // agentPrompt is what a lane's agent is told: the prompt given, or for an
@@ -551,7 +520,7 @@ func promptAgent(lane Lane, target, prompt string) error {
 		fmt.Printf("agent ready in %s\n", lane.Name)
 		return nil
 	}
-	if err := herdr(nil, "agent", "prompt", target, prompt); err != nil {
+	if err := herdrNow().prompt(target, prompt); err != nil {
 		return err
 	}
 	fmt.Printf("agent in %s is on it\n", lane.Name)
@@ -868,7 +837,7 @@ func cmdRm(args []string) error {
 	}
 
 	if ws := herdrWorkspaceOf(lane.Main)[lane.key()]; ws != "" {
-		_ = herdr(nil, "workspace", "close", ws)
+		_ = herdrNow().close(ws)
 	}
 	if err := removeWorktree(lane, force); err != nil {
 		return err
