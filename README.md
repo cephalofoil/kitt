@@ -234,7 +234,7 @@ kitt release                                          # done: the stack stays up
 
 `kitt ls` shows the lease above the lanes, the dashboard marks the holder with ⚿. The single mode needs herdr: kitt starts servers only in herdr panes, and stops only what it can find.
 
-The single mode is not supported on Windows yet. There kitt can neither tell which session holds a lease nor find what listens on a port to free it, so a lease would not keep lanes apart; every command that would take the stack refuses, and `kitt doctor` says so. Without `[stack]` lanes run in parallel as before; `kitt up --print`, `kitt who` and `kitt ls` work either way.
+On Windows kitt finds the session that holds a lease through a process snapshot and what listens on a port through `netstat -ano`, as `ps` and `lsof` do elsewhere.
 
 [docs/single-mode.md](docs/single-mode.md) describes the lease, the takeover and `env_out` as the code has them, and their limits.
 ## herdr app

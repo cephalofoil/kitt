@@ -5,6 +5,7 @@ package main
 import (
 	"os/exec"
 	"syscall"
+	"unsafe"
 )
 
 // setRawCmdLine hands cmd.exe the line exactly as written; Go's own argument
@@ -30,4 +31,23 @@ func processAlive(pid int) bool {
 		return false
 	}
 	return code == stillActive
+}
+
+// parentOf is the pid of a process's parent, read from a snapshot of all
+// processes, or 0. Windows keeps a parent's pid after it ended; the caller
+// checks that it is alive.
+func parentOf(pid int) int {
+	snap, err := syscall.CreateToolhelp32Snapshot(syscall.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return 0
+	}
+	defer syscall.CloseHandle(snap)
+	var entry syscall.ProcessEntry32
+	entry.Size = uint32(unsafe.Sizeof(entry))
+	for err = syscall.Process32First(snap, &entry); err == nil; err = syscall.Process32Next(snap, &entry) {
+		if int(entry.ProcessID) == pid {
+			return int(entry.ParentProcessID)
+		}
+	}
+	return 0
 }

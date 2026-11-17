@@ -27,8 +27,7 @@ lease_ttl = "20m"   # how long a hard lease holds without a word from its holder
 ```
 
 - `mode`: only the exact string `"single"` turns the single mode on. Without it,
-  every function below does nothing and no lease file is written. On Windows
-  the single mode is refused (see [Windows](#windows)).
+  every function below does nothing and no lease file is written.
 - `keep`: app names. The **stack apps** are all apps that are neither
   `shared = true` nor named in `keep`. Only stack apps are stopped on a takeover.
 - `lease_ttl`: a Go duration (`time.ParseDuration`). Missing, unparsable, zero or
@@ -138,10 +137,10 @@ the single mode needs herdr to start and stop a lane's servers (or kitt up --pri
 
 `holder` is the process a hard lease lives as long as. kitt's own parent is often
 a shell made for one command (an agent's tool call) that ends when kitt does, so
-on macOS and Linux kitt takes its **grandparent**: it runs
-`ps -o ppid= -p <parent pid>` and uses the answer when it is a number above 1,
-else the parent. On Windows it uses the parent; that is one reason the single
-mode is refused there (see [Windows](#windows)). The emulator lock outside the
+kitt takes its **grandparent** (`parentOf`): `ps -o ppid= -p <parent pid>` on
+macOS and Linux, a `CreateToolhelp32Snapshot` of the processes on Windows. It
+uses the answer when it is above 1 and alive (Windows keeps the pid of a parent
+that ended), else the parent. The emulator lock outside the
 single mode still uses it.
 
 Liveness is `kill(pid, 0)` on Unix (EPERM counts as alive) and
@@ -328,20 +327,12 @@ Limits:
 
 ## Windows
 
-`[stack] mode = "single"` is refused on Windows: `acquireStack` and
-`needsHerdr` (so `up`, `new --up`, `focus`, `emu`, `phone`, `claim`,
-`proof begin`) fail with
+The single mode works on Windows as elsewhere. Two things differ:
 
-```
-the single mode ([stack] mode = "single") is not supported on Windows yet: kitt can neither tell which session holds the stack nor free a lane's ports there. Remove [stack] from kitt.toml to run lanes in parallel as before
-```
-
-and `kitt doctor`, run inside such a repo, prints it. The reasons: `holderPid`
-has no grandparent lookup there (an agent's one-command shell ends at once, so
-a hard lease is stale at once), and `listeners()` finds no pid on a port, so a
-takeover frees nothing. `kitt up --print`, `kitt who`, `kitt ls`, `release`,
-`proof shot`/`end` and everything in the parallel mode work as before. The
-check reads `onWindows`, a variable, so the tests can set it.
+- `parentOf` reads a process snapshot (`CreateToolhelp32Snapshot`), not `ps`.
+- `listeners()` reads `netstat -ano -p TCP`, not `lsof`: a line whose local port is
+  the app's and whose remote port is 0 is a listener, whatever the state is called
+  in the system's language (`TestNetstatListeners`).
 
 ## Tests
 
@@ -371,7 +362,8 @@ anything.
 | `TestDevHash` | the hash ignores map order and changes with the env or the command |
 | `TestEnvValue` | the file text for plain, space, `#`, quotes, backtick, `$`, `\$`, line break, `\n`, Windows paths, pinned as checked against dotenv 16.6.1 + dotenv-expand 11.0.7 and `@expo/env` 2.6.0; values no quoting carries are an error naming the key, and nothing is written |
 | `TestEnvOutOutranked` | the Expo order of env files, a linked file above `env_out` named, `web` apps not checked |
-| `TestStackSingleRefusedOnWindows` | on Windows the single mode is refused by `acquireStack` and `needsHerdr`, no lease written; parallel mode and `kitt who` work |
+| `TestNetstatListeners` | Windows: `netstat -ano` lines give the pids listening on a port, the state word in any language, each pid once |
+| `TestHolderIsAliveAncestor` | the holder is a live ancestor of kitt; `parentOf` answers the parent of a process |
 | `TestFocusRestartNoUpRefused` | `kitt focus --restart --no-up` is a usage error and takes nothing |
 | `TestTakeoverOpening` | another lane's hard lease adds `--force` as the last choice, never the starting one, naming holder and reason, for a lane and a new lane |
 | `TestBlockingLease` | only a live hard lease of another lane in the single mode offers the takeover; enter on a lane shows it |
@@ -400,7 +392,7 @@ restart-on-change path inside `up` (which needs herdr and a server on the port).
   for opencode or other agent hosts; if their command runner nests differently,
   the holder may be a process that ends too early (the lease goes stale at once)
   or one that outlives the session (the lease holds until `lease_ttl`).
-- **Windows** refuses the single mode (see [Windows](#windows)).
+- **On Windows** `netstat` must be on PATH (it ships with Windows); without it a port that still answers after 10 seconds is reported, not freed.
 - **Without `lsof`** on macOS or Linux, a port that still answers after 10
   seconds is not freed: kitt prints `still on <port>: stop it by hand`.
 - **No `--wait` for `up`, `focus` or `emu`.** They fail at once against a live

@@ -159,9 +159,6 @@ func cmdDoctor([]string) error {
 		using = b.kind()
 	}
 	line(hasHerdr(), "uses", using+" ("+herdrWhyText+")")
-	if err := singleSupported(cfg); err != nil {
-		line(false, "stack", err.Error()+from)
-	}
 	for _, app := range cfg.Apps {
 		if warning := envOutWarning(cfg, app); warning != "" {
 			line(false, "env_out", app.Name+": "+strings.TrimPrefix(warning, "warning: ")+from)
