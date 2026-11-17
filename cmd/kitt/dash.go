@@ -317,18 +317,11 @@ func (d dash) pressed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		// How it opens is asked first, by what the lane has running already.
 		d.mode, d.pending, d.title = "how", row.Name, "open "
-		d.openings, d.choice = laneOpenings(*row, loadRepoConfig(row.Main, row.Path))
+		d.openings, d.choice = laneOpenings(*row, loadRepoConfig(row.Main, row.Path), blockingLease(row.Repo, row.key()))
 		return d, nil
 	case "e":
-		lane := row.Lane
-		d.busy = "emulator → " + row.Name
-		return d, func() tea.Msg {
-			message, err := pointEmulator(lane)
-			if err != nil {
-				return doneMsg(err.Error())
-			}
-			return doneMsg(message)
-		}
+		// Its own process, like enter: in the single mode it takes the stack, which may stop another lane.
+		return start("emulator → "+row.Name, "emu", target)
 	case "g":
 		if !row.Managed {
 			return say(row.Name + " is not a lane yet: press a to adopt it")
@@ -410,7 +403,7 @@ func (d dash) typed(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "new":
 			// What the lane is, is typed: how it opens is asked next.
 			d.mode, d.pending, d.title = "how", input, "new lane "
-			d.openings, d.choice = newOpenings(input, repo)
+			d.openings, d.choice = newOpenings(input, repo, blockingLease(repo, ""))
 			return d, nil
 		case "how":
 			return d.open()
@@ -487,23 +480,60 @@ const issueHint = "it reads the issue, builds it, proves it in the app and opens
 
 // newOpenings are the ways a lane that is yet to be made opens, and the one
 // the dialog starts on: an issue is its own prompt, a name is a session.
-func newOpenings(input, repo string) ([]opening, int) {
+// `held` is another lane's hard lease on the repo's stack, if any.
+func newOpenings(input, repo string, held *Lease) ([]opening, int) {
 	args, issue := newArgs(input, repo)
 	with := func(more ...string) []string { return append(append([]string{}, args...), more...) }
 	list := []opening{
 		{"a blank Claude", "the lane and an agent to talk to, no dev servers started", with("--blank", "--focus"), false},
 		{"a blank Claude and the dev servers", "the same, with the lane's apps started on its ports", with("--blank", "--up", "--focus"), false},
 	}
+	chosen := 1
 	if issue {
-		return append(list, opening{"Claude on the issue, through to a pull request", issueHint, with("--up"), false}), 2
+		list, chosen = append(list, opening{"Claude on the issue, through to a pull request", issueHint, with("--up"), false}), 2
+	} else {
+		list = append(list, opening{"Claude with a prompt and the dev servers", "you type what Claude is to do next, then it starts by itself", with("--up"), true})
 	}
-	return append(list, opening{"Claude with a prompt and the dev servers", "you type what Claude is to do next, then it starts by itself", with("--up"), true}), 1
+	if held != nil {
+		list = append(list, takeover(held, with("--blank", "--up", "--focus", "--force")))
+	}
+	return list, chosen
+}
+
+// takeover is the opening that breaks another lane's hard lease with --force.
+// It is only ever offered, last and never chosen by itself, and it says whose
+// test it ends: without it the dev servers above fail against that lease.
+func takeover(held *Lease, args []string) opening {
+	return opening{
+		"take over the stack (ends " + held.Name + "'s " + held.Reason + ")",
+		held.Name + " holds it since " + ago(held.Since) + ": its servers stop and what it is testing fails; the dev servers start here",
+		args, false,
+	}
+}
+
+// blockingLease is the hard lease another lane holds on a repo's stack in the
+// single mode, which only --force gets past; nil when nothing keeps `lane` out.
+func blockingLease(repo, lane string) *Lease {
+	if repo == "" {
+		return nil
+	}
+	ref, err := findRepo(repo)
+	if err != nil {
+		return nil
+	}
+	cfg := loadRepoConfig(ref.Path, "")
+	held, ok := readLease(repo)
+	if !cfg.Stack.single() || !ok || held.Lane == lane || !held.blocks(cfg.Stack.ttl()) {
+		return nil
+	}
+	return &held
 }
 
 // laneOpenings are the ways a lane that exists opens, by what is in it
 // already: a workspace to go to, an agent at work, dev servers of its own.
-// The dialog starts on the least of them that takes the person there.
-func laneOpenings(row LaneView, cfg RepoConfig) ([]opening, int) {
+// The dialog starts on the least of them that takes the person there. `held`
+// is another lane's hard lease on the repo's stack, if any.
+func laneOpenings(row LaneView, cfg RepoConfig, held *Lease) ([]opening, int) {
 	focus := func(more ...string) []string {
 		return append([]string{"focus", row.Repo + "/" + row.Name}, more...)
 	}
@@ -543,10 +573,16 @@ func laneOpenings(row LaneView, cfg RepoConfig) ([]opening, int) {
 	switch {
 	case agent:
 		list = append(list, opening{"tell Claude something", "you type it next: it goes to the agent at work", focus("--no-up"), true})
+	case issue && row.State.Prompt != "":
+		// The prompt the lane was made with goes before the issue's (agentPrompt): the label says so.
+		list = append(list, opening{"Claude on the prompt the lane was made with", "it is given again, not kitt's issue prompt; the dev servers start", focus("--agent"), false})
 	case issue:
 		list = append(list, opening{"Claude on the issue, through to a pull request", issueHint, focus("--agent"), false})
 	default:
 		list = append(list, opening{"Claude with a prompt and the dev servers", "you type what Claude is to do next, then it starts by itself", focus(), true})
+	}
+	if held != nil {
+		list = append(list, takeover(held, focus("--force")))
 	}
 	return list, chosen
 }
@@ -578,6 +614,25 @@ func (d dash) create(prompt string) (tea.Model, tea.Cmd) {
 	return d, self(args...)
 }
 
+// laneTitle is what a lane row says the lane is for: its issue or ticket and
+// title, else its pull request's title, else its branch.
+func laneTitle(row LaneView) string {
+	title := row.Branch
+	switch {
+	case row.State != nil && row.State.Title != "" && row.State.Issue > 0:
+		title = fmt.Sprintf("#%d %s", row.State.Issue, row.State.Title)
+	case row.State != nil && row.State.Title != "":
+		title = row.State.Title
+	case row.PR != nil:
+		title = row.PR.Title
+	}
+	// A Linear lane has no title of its own: its ticket goes where an issue's number does.
+	if row.State != nil && row.State.Ticket != "" && row.State.Issue == 0 {
+		title = row.State.Ticket + " " + title
+	}
+	return title
+}
+
 func cut(s string, width int) string {
 	r := []rune(s)
 	if width <= 0 {
@@ -607,8 +662,11 @@ func (d dash) View() string {
 	rows := d.visible()
 
 	var b strings.Builder
-	needs, emulator, hidden := 0, "", 0
+	needs, emulator, hidden, held := 0, "", 0, ""
 	for _, row := range d.rows {
+		if row.Lease != nil && row.Lease.Kind == "hard" {
+			held = row.Name + " (" + row.Lease.Reason + ")"
+		}
 		if !row.Managed {
 			hidden++
 		}
@@ -639,6 +697,9 @@ func (d dash) View() string {
 	third := dim.Render("emulator free")
 	if emulator != "" {
 		third = dim.Render("emulator → ") + cyan.Render(emulator)
+	}
+	if held != "" {
+		third += dim.Render(" · stack held by ") + yellow.Render(held)
 	}
 	info := []string{first, second, third}
 
@@ -679,17 +740,7 @@ func (d dash) View() string {
 			continue
 		}
 
-		title := row.Branch
-		switch {
-		case row.State != nil && row.State.Title != "" && row.State.Issue > 0:
-			title = fmt.Sprintf("#%d %s", row.State.Issue, row.State.Title)
-		case row.State != nil && row.State.Title != "":
-			title = row.State.Title
-		case row.PR != nil:
-			title = row.PR.Title
-		}
-
-		b.WriteString(pointer + agentDot(row.Agent) + " " + name + " " + dim.Render(cut(title, titleW)) + " " + cyan.Render(cut(strings.Join(row.Touched, "·"), appsW)) + " " +
+		b.WriteString(pointer + agentDot(row.Agent) + " " + name + " " + dim.Render(cut(laneTitle(row), titleW)) + " " + cyan.Render(cut(strings.Join(row.Touched, "·"), appsW)) + " " +
 			agentCell(row.Agent, agentW) + gitCell(row, gitW) + prCell(row, prW) + proofCell(row, proofW) + marks(row) + "\n")
 	}
 	if hidden > 0 && !d.showAll {
@@ -952,6 +1003,9 @@ func marks(row LaneView) string {
 	}
 	if row.InEmulator {
 		out += cyan.Render("▣")
+	}
+	if row.Lease != nil && row.Lease.Kind == "hard" {
+		out += yellow.Render("⚿")
 	}
 	return out
 }

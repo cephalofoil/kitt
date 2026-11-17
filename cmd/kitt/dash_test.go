@@ -1,8 +1,11 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -29,14 +32,14 @@ func same(t *testing.T, what string, got []string, chosen int, want []string, wa
 }
 
 func TestNewOpenings(t *testing.T) {
-	list, chosen := newOpenings("tryout", "r")
+	list, chosen := newOpenings("tryout", "r", nil)
 	same(t, "a name", calls(list), chosen, []string{
 		"new tryout --repo r --blank --focus",
 		"new tryout --repo r --blank --up --focus",
 		"new tryout --repo r --up ?",
 	}, 1)
 
-	list, chosen = newOpenings("412 web admin", "r")
+	list, chosen = newOpenings("412 web admin", "r", nil)
 	same(t, "an issue and its apps", calls(list), chosen, []string{
 		"new 412 --repo r --apps web,admin --blank --focus",
 		"new 412 --repo r --apps web,admin --blank --up --focus",
@@ -57,7 +60,7 @@ func TestLaneOpenings(t *testing.T) {
 	}
 
 	// Nothing of the lane is open or running: the dialog starts on all of it.
-	list, chosen := laneOpenings(row(func(v *LaneView) { v.Up = []string{"supabase"} }), cfg)
+	list, chosen := laneOpenings(row(func(v *LaneView) { v.Up = []string{"supabase"} }), cfg, nil)
 	same(t, "a lane that is closed", calls(list), chosen, []string{
 		"focus r/lane --blank",
 		"focus r/lane --blank --no-up",
@@ -69,7 +72,7 @@ func TestLaneOpenings(t *testing.T) {
 	list, chosen = laneOpenings(row(func(v *LaneView) {
 		v.Workspace, v.AgentPane, v.Up = "w1", "p1", []string{"mobile", "supabase", "api"}
 		v.State = &LaneState{Issue: 412}
-	}), cfg)
+	}), cfg, nil)
 	same(t, "a lane at work", calls(list), chosen, []string{
 		"focus r/lane --no-up",
 		"focus r/lane --new-agent --no-up",
@@ -81,7 +84,7 @@ func TestLaneOpenings(t *testing.T) {
 	}
 
 	// Open but idle, with an issue: the agent can start on it by itself.
-	list, chosen = laneOpenings(row(func(v *LaneView) { v.Workspace, v.State = "w1", &LaneState{Issue: 412} }), cfg)
+	list, chosen = laneOpenings(row(func(v *LaneView) { v.Workspace, v.State = "w1", &LaneState{Issue: 412} }), cfg, nil)
 	same(t, "an open issue lane with nothing running", calls(list), chosen, []string{
 		"focus r/lane --no-up",
 		"focus r/lane --blank",
@@ -89,6 +92,19 @@ func TestLaneOpenings(t *testing.T) {
 		"focus r/lane",
 		"focus r/lane --agent",
 	}, 0)
+	if label := list[4].label; !strings.Contains(label, "on the issue") {
+		t.Errorf("an issue lane without a prompt of its own offers %q", label)
+	}
+
+	// Made with a prompt, the lane's agent is given that prompt again, not the issue: the dialog says so.
+	stored := row(func(v *LaneView) { v.Workspace, v.State = "w1", &LaneState{Issue: 412, Prompt: "Fix the login"} })
+	list, _ = laneOpenings(stored, cfg, nil)
+	if last := list[len(list)-1]; strings.Contains(last.label, "issue") || !strings.Contains(last.label, "prompt") {
+		t.Errorf("an issue lane with a stored prompt offers %q", last.label)
+	}
+	if got := agentPrompt(stored.Lane, cfg, ""); got != "Fix the login" {
+		t.Errorf("the agent of that lane is told %q", got)
+	}
 }
 
 func TestOverlay(t *testing.T) {
@@ -261,6 +277,38 @@ func TestBacklog(t *testing.T) {
 	}
 }
 
+// A Linear lane shows its ticket where an issue lane shows its number, in the same width.
+func TestLaneRowShowsTicket(t *testing.T) {
+	t.Setenv("KITT_HOME", t.TempDir())
+	ticket := LaneView{Lane: Lane{Repo: "r", Name: "eng-123-fix-login", Branch: "tjark/eng-123-fix-login", Managed: true,
+		State: &LaneState{Ticket: "ENG-123", Branch: "tjark/eng-123-fix-login"}}}
+	issue := LaneView{Lane: Lane{Repo: "r", Name: "412-empty", Branch: "feat/412-empty", Managed: true,
+		State: &LaneState{Issue: 412, Title: "Empty state"}}}
+	if got := laneTitle(ticket); got != "ENG-123 tjark/eng-123-fix-login" {
+		t.Errorf("ticket lane title %q", got)
+	}
+	if got := laneTitle(issue); got != "#412 Empty state" {
+		t.Errorf("issue lane title %q", got)
+	}
+
+	d := dash{loaded: true, width: 140, height: 30, rows: []LaneView{ticket, issue}}
+	view := ansi.Strip(d.View())
+	var widths []int
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, "eng-123-fix-login ") || strings.Contains(line, "412-empty ") {
+			widths = append(widths, len([]rune(strings.TrimRight(line, " "))))
+		}
+	}
+	if !strings.Contains(view, "ENG-123 tjark/") || !strings.Contains(view, "#412 Empty state") || len(widths) != 2 {
+		t.Fatalf("the lane rows:\n%s", view)
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if len([]rune(line)) > 140 {
+			t.Errorf("a line is %d wide in a pane of 140: %q", len([]rune(line)), line)
+		}
+	}
+}
+
 func TestIssuePrompt(t *testing.T) {
 	lane := Lane{State: &LaneState{Issue: 412, Title: "Empty state"}}
 	prompt := agentPrompt(lane, RepoConfig{}, "")
@@ -268,5 +316,81 @@ func TestIssuePrompt(t *testing.T) {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("the issue prompt lacks %q", want)
 		}
+	}
+}
+
+// Another lane's hard lease: the dialog offers to take the stack over, last,
+// never as the choice it starts on, naming whose test that ends.
+func TestTakeoverOpening(t *testing.T) {
+	held := &Lease{Name: "other", Kind: "hard", Reason: "claim: maestro login", Since: time.Now().Add(-3 * time.Minute)}
+	cfg := RepoConfig{Apps: []App{{Name: "api", Kind: "backend"}}}
+	row := LaneView{Lane: Lane{Repo: "r", Name: "lane", Managed: true}, Workspace: "w1"}
+
+	plain, plainChosen := laneOpenings(row, cfg, nil)
+	list, chosen := laneOpenings(row, cfg, held)
+	same(t, "a lane another lane's test keeps out", calls(list), chosen, append(calls(plain), "focus r/lane --force"), plainChosen)
+	if label := list[len(list)-1].label; label != "take over the stack (ends other's claim: maestro login)" {
+		t.Errorf("the takeover says %q", label)
+	}
+	for _, opening := range plain {
+		if strings.Contains(strings.Join(opening.args, " "), "--force") {
+			t.Errorf("an opening forces without a held lease: %v", opening.args)
+		}
+	}
+
+	list, chosen = newOpenings("tryout", "r", held)
+	same(t, "a new lane while another lane's test runs", calls(list), chosen, []string{
+		"new tryout --repo r --blank --focus",
+		"new tryout --repo r --blank --up --focus",
+		"new tryout --repo r --up ?",
+		"new tryout --repo r --blank --up --focus --force",
+	}, 1)
+}
+
+// Only a live hard lease of another lane in the single mode asks for a takeover.
+func TestBlockingLease(t *testing.T) {
+	w := newStackWorld(t, "single")
+	repo := t.TempDir()
+	write := func(toml string) {
+		if err := os.WriteFile(filepath.Join(repo, "kitt.toml"), []byte("name = \"r\"\nbase = \"main\"\n"+toml), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("[stack]\nmode = \"single\"\n")
+	if err := saveGlobal(Global{Repos: []RepoRef{{Name: "r", Path: repo}}}); err != nil {
+		t.Fatal(err)
+	}
+	a, b := w.lane("a").key(), w.lane("b").key()
+
+	if blockingLease("r", b) != nil {
+		t.Fatal("a free stack blocks")
+	}
+	_, _ = w.acquire("a", "soft", 0, false)
+	if blockingLease("r", b) != nil {
+		t.Fatal("a soft lease blocks")
+	}
+	_, _ = w.acquire("a", "hard", 0, false)
+	if held := blockingLease("r", b); held == nil || held.Name != "a" {
+		t.Fatalf("a's hard lease, seen from b: %+v", held)
+	}
+	if blockingLease("r", a) != nil || blockingLease("r", "") == nil {
+		t.Fatal("the holder is kept out of its own lease, or a new lane is not")
+	}
+
+	// Enter on b: the dialog offers the takeover.
+	row := LaneView{Lane: w.lane("b")}
+	d := keys(dash{rows: []LaneView{row}}, "", tea.KeyEnter)
+	if view := d.dialog(120); !strings.Contains(view, "take over the stack (ends a's hard-test)") {
+		t.Errorf("the dialog lacks the takeover:\n%s", view)
+	}
+
+	w.dead[w.lease().Holder] = true
+	if blockingLease("r", b) != nil {
+		t.Fatal("a stale lease blocks")
+	}
+	w.dead = map[int]bool{}
+	write("")
+	if blockingLease("r", b) != nil {
+		t.Fatal("the parallel mode blocks")
 	}
 }

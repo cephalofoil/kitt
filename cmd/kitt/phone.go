@@ -80,6 +80,18 @@ func phoneEnv(env map[string]string, host string) (map[string]string, map[string
 	return out, ports
 }
 
+// phoneMetroEnv is the environment the phone Metro starts with: the app's
+// (env files, [app.env], its port on the phone's port), with every address on
+// this machine named by its address on the network. Expo still reads the app's
+// .env files (env_out among them), but never over a key the process has: in
+// @expo/env 2.6.0, loadEnvFiles skips a key already set in process env.
+func phoneMetroEnv(cfg RepoConfig, app App, lane Lane, dir, host string) (map[string]string, map[string]int) {
+	env, backends := phoneEnv(appEnv(cfg, app, lane, dir), host)
+	// What Metro tells the dev client about itself, where the machine has several addresses.
+	env["REACT_NATIVE_PACKAGER_HOSTNAME"] = host
+	return env, backends
+}
+
 // answers says whether something on this machine listens on a port for the
 // network, not only for itself. A firewall in between is not seen from here.
 func answers(host string, port int) bool {
@@ -111,17 +123,27 @@ func phone(lane Lane, host string, printOnly bool) (phoneView, error) {
 	if port == 0 {
 		return phoneView{}, fail("no free port next to %s's %d", expo.Name, expo.port(lane.Slot))
 	}
+	var notes []string
+	if cfg.Stack.single() && !printOnly {
+		// A phone Metro is one of the lane's servers: the lane takes the stack, as with `kitt up`.
+		if err := needsHerdr(cfg); err != nil {
+			return phoneView{}, err
+		}
+		_, stopped, err := acquireStack(lane, cfg, "soft", "phone", 0, false)
+		if err != nil {
+			return phoneView{}, err
+		}
+		notes = stopped
+	}
 
 	// The same app on the phone's port: {port} in its dev line and its env follow.
 	app := *expo
 	app.Port += port - expo.port(lane.Slot)
 	dir := appDir(app, lane)
-	env, backends := phoneEnv(appEnv(cfg, app, lane, dir), host)
-	// What Metro tells the dev client about itself, where the machine has several addresses.
-	env["REACT_NATIVE_PACKAGER_HOSTNAME"] = host
+	env, backends := phoneMetroEnv(cfg, app, lane, dir, host)
 	command := cfg.expand(app.Dev, app, lane)
 
-	view := phoneView{URL: fmt.Sprintf("http://%s:%d", host, port)}
+	view := phoneView{URL: fmt.Sprintf("http://%s:%d", host, port), Notes: notes}
 	view.Link = view.URL
 	if app.Scheme != "" {
 		view.Link = app.Scheme + "://expo-development-client/?url=" + url.QueryEscape(view.URL)
@@ -171,9 +193,9 @@ func phone(lane Lane, host string, printOnly bool) (phoneView, error) {
 		return view, err
 	}
 	_ = updateState(func(s *State) {
-		if entry := s.Lanes[lane.key()]; entry != nil {
-			entry.Phone = host
-		}
+		// Kept so a takeover can stop it where the dev tab stays.
+		entry := s.laneEntry(lane)
+		entry.Phone, entry.PhonePane = host, pane
 	})
 	for waited := 0; waited < 90 && !listening(port); waited += 2 {
 		time.Sleep(2 * time.Second)

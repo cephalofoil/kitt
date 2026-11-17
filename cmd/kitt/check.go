@@ -114,11 +114,7 @@ func check(lane Lane, all bool, only string, live bool) (CheckResult, string) {
 	}
 
 	_ = updateState(func(s *State) {
-		entry := s.Lanes[lane.key()]
-		if entry == nil {
-			entry = &LaneState{Repo: lane.Repo, Name: lane.Name, Path: lane.Path, Slot: lane.Slot, Created: time.Now()}
-			s.Lanes[lane.key()] = entry
-		}
+		entry := s.laneEntry(lane)
 		if ran > 0 {
 			entry.Checks = &result
 		}

@@ -317,10 +317,11 @@ What to settle, per app:
 - env_files: env files in the app's directory that select the LOCAL environment and must be loaded for dev, if the repo has that convention.
 - [app.env]: variables that tell this app where another app of the same lane listens, written with {port:<app name>}.
 - port_env: a variable the app reads its port from, if any.
+- env_out: for an app whose env files are read with them winning over the process environment (e.g. an app.config.js that loads dotenv with override, or react-native-dotenv; Expo CLI's own loader keeps the process's values), a gitignored, not-linked file in the app's directory that kitt writes [app.env] and port_env into on every start, e.g. ".env.development.local". Only when the repo's .gitignore covers it.
 - stop: a command that ends what dev started, when a container outlives its terminal.
 - lazy = true for apps that are not needed for most tickets.
 Also: drop detected apps that are not runnable apps, add apps detection missed (a database, a worker), and never give two apps the same base port.
-For the repo: base, link (gitignored env files to symlink into each lane), [emulator] reverse (ports the phone app reaches on localhost besides the apps' own), [proof] guide (one or two lines: test accounts, local database, what to show).
+For the repo: base, link (gitignored env files to symlink into each lane), [emulator] reverse (ports the phone app reaches on localhost besides the apps' own), [proof] guide (one or two lines: test accounts, local database, what to show), [stack] mode = "single" when the machine cannot run several lanes' servers at once (fixed ports, heavy services), with keep = [apps never stopped].
 
 Rules: keep every key name as in the detected file. Do not invent commands: every command must come from a file you read. Where you are unsure, keep the detected value and add a TOML comment starting with "# unsure:".
 
@@ -378,8 +379,14 @@ func renderConfig(cfg RepoConfig) string {
 	}
 	b.WriteString("]\n")
 
-	if len(cfg.Emulator.Reverse) > 0 || cfg.Emulator.Serial != "" {
+	if len(cfg.Emulator.Reverse) > 0 || cfg.Emulator.Serial != "" || cfg.Emulator.Platform != "" || cfg.Emulator.Simulator != "" {
 		b.WriteString("\n[emulator]\n")
+		if cfg.Emulator.Platform != "" {
+			fmt.Fprintf(&b, "platform = %s\n", tomlString(cfg.Emulator.Platform))
+		}
+		if cfg.Emulator.Simulator != "" {
+			fmt.Fprintf(&b, "simulator = %s\n", tomlString(cfg.Emulator.Simulator))
+		}
 		if cfg.Emulator.Serial != "" {
 			fmt.Fprintf(&b, "serial = %s\n", tomlString(cfg.Emulator.Serial))
 		}
@@ -389,6 +396,18 @@ func renderConfig(cfg RepoConfig) string {
 				ports[i] = strconv.Itoa(port)
 			}
 			fmt.Fprintf(&b, "# Ports besides the apps' own that the emulator must reach on localhost.\nreverse = [%s]\n", strings.Join(ports, ", "))
+		}
+	}
+	if cfg.Stack.Mode != "" || len(cfg.Stack.Keep) > 0 || cfg.Stack.LeaseTTL != "" {
+		b.WriteString("\n[stack]\n")
+		if cfg.Stack.Mode != "" {
+			fmt.Fprintf(&b, "mode = %s\n", tomlString(cfg.Stack.Mode))
+		}
+		if cfg.Stack.LeaseTTL != "" {
+			fmt.Fprintf(&b, "lease_ttl = %s\n", tomlString(cfg.Stack.LeaseTTL))
+		}
+		if len(cfg.Stack.Keep) > 0 {
+			fmt.Fprintf(&b, "keep = %s\n", quote(cfg.Stack.Keep))
 		}
 	}
 	if cfg.Proof.Guide != "" {
@@ -418,6 +437,9 @@ func renderConfig(cfg RepoConfig) string {
 		if len(app.EnvFiles) > 0 {
 			fmt.Fprintf(&b, "env_files = %s\n", quote(app.EnvFiles))
 		}
+		if app.EnvOut != "" {
+			fmt.Fprintf(&b, "env_out = %s\n", tomlString(app.EnvOut))
+		}
 		if len(app.Setup) > 0 {
 			fmt.Fprintf(&b, "setup = %s\n", quote(app.Setup))
 		}
@@ -444,7 +466,10 @@ func renderConfig(cfg RepoConfig) string {
 	b.WriteString(`
 # Placeholders in dev, stop, setup, checks and env values:
 #   {port} this app's port in the lane · {port:<app>} another app's · {lane} · {slot} · {root} the lane · {main} the main checkout
-# Keys an app can have: port_env, shared, lazy, dev, stop, env_files, setup, checks, and [app.env].
+# Keys an app can have: port_env, shared, lazy, dev, stop, env_files, env_out, setup, checks, and [app.env].
+# env_out = ".env.development.local" writes [app.env] and port_env into that (gitignored) file on every up,
+# for setups that read env files over the process env (dotenv with override in app.config.js).
+# [stack] mode = "single" runs one lane's servers at a time (keep = ["db"] never stops those apps).
 `)
 
 	return b.String()

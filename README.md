@@ -14,14 +14,35 @@ Three parts:
 ## Install
 
 ```
-go build -o ~/.local/bin/kitt.exe ./cmd/kitt     # any directory on PATH
+go build -o ~/.local/bin/kitt ./cmd/kitt     # any directory on PATH; on Windows see below
 
 /plugin marketplace add cephalofoil/kitt
 /plugin install pr-watch@kitt
 /plugin install lanes@kitt
 ```
 
-`kitt doctor` says what is missing (git, gh, herdr, adb, symlinks).
+`kitt doctor` says what is missing (git, gh, herdr, adb or the iOS simulator, symlinks) and which device kitt would use.
+
+### On Windows
+
+In PowerShell, from the repo root (`~` is not expanded for `go build`, so use `$HOME`):
+
+```powershell
+New-Item -ItemType Directory -Force "$HOME\.local\bin" | Out-Null
+go build -o "$HOME\.local\bin\kitt.exe" ./cmd/kitt
+```
+
+Once, put that folder on your user PATH, then open a new terminal:
+
+```powershell
+$bin  = "$HOME\.local\bin"
+$path = [Environment]::GetEnvironmentVariable("Path", "User")
+if (($path -split ';') -notcontains $bin) {
+  [Environment]::SetEnvironmentVariable("Path", "$path;$bin", "User")
+}
+```
+
+To update, run the `go build` line again. `kitt doctor` checks symlinks: turn on Developer Mode (Settings → System → For developers) so env files are symlinked into lanes; without it kitt falls back to hard links.
 
 ## A day with it
 
@@ -80,13 +101,47 @@ The dashboard opens with the kitt wordmark and, beside it, three facts: how many
 
 The tube is drawn with Unicode sextants (U+1FB00 and up). A font without them shows boxes there; the wordmark uses only block elements and draws everywhere.
 
+## From Linear
+
+Linear's **Work on issue → Custom script** hands an issue to kitt: a lane on Linear's branch name, an agent started on Linear's prompt, the lane's workspace shown in herdr. Opened a second time, the issue goes back to its lane; a branch that exists only on origin is checked out, not started anew.
+
+```
+ln -s "$PWD/linear/kitt-linear" ~/.local/bin/kitt-linear
+```
+
+Turn on **Custom script** in Linear (Settings → Code & reviews → Configure coding tools), then `~/.linear/coding-tools.json`:
+
+```json
+{
+  "openIssue": {
+    "path": "/Users/<you>/.local/bin/kitt-linear",
+    "args": ["{{issue.identifier}}", "--branch", "{{issue.branchName}}", "--dir", "{{workDir}}"],
+    "env": ["LINEAR_PROMPT"]
+  }
+}
+```
+
+The prompt comes through the environment, not the arguments, so no text of it is read as a flag. `--dir` picks the registered repo the working directory lies in. Linear runs the script outside any shell and does not wait: it sets its own PATH, works in the background into `~/Library/Logs/kitt-linear.log`, starts herdr in Terminal when no herdr server runs (`KITT_TERMINAL=iTerm` for iTerm), and reports a failure as a notification.
+
+`kitt-linear` runs on macOS only: it is a zsh script that uses `osascript` and `~/Library/Logs`. There is no Windows counterpart yet.
+
+Linear's prompt is kept in plain text in kitt's `state.json`, like any `--prompt` given to `kitt new`, so `g` can start the agent on it again.
+
+The same from the shell: `kitt new ENG-123 --branch tjark/eng-123-fix-login --prompt "…"`. A lane is then also named by its ticket, in any case: `kitt focus eng-123`. Given alone, a name is a ticket only with an upper-case team key (`kitt new ENG-123`; `kitt new fix-2` is a plain name); with `--branch` or `--prompt-env` any case is. Two branches that end alike (`tjark/eng-1-x`, `tom/eng-1-x`) would give one lane name; the second is refused with the first lane's branch named, and `kitt new ENG-1 --branch tom/eng-1-x --name eng-1-x-tom` gives it a name of its own.
+
+A Linear lane shows its ticket in the dashboard where an issue lane shows its number, and `kitt ls --json` carries it as `Ticket`.
+
 ## How lanes stay apart
 
 - **Ports.** Each lane holds a slot; an app listens on its base port plus ten per slot (Metro 8081 in the main checkout, 8091 in the first lane). `kitt env` prints a lane's ports.
 - **Env files.** The gitignored files named under `link` are symlinks into the main checkout, so every lane sees the same secrets and an edit reaches all of them.
-- **The emulator.** One device, one installed dev client. `kitt emu` reverses the lane's ports into it and sends the client to the lane's Metro; no native build. A proof holds a lock, so two agents never load over each other.
-- **A phone.** A device on the Wi-Fi cannot reach the `localhost` a lane's app is told. `kitt phone` starts a second Metro next to the lane's (8112 beside 8111), with every local address in the app's env replaced by this machine's address on the network, and prints a code the phone's camera opens the dev client with. The lane's own Metro and the emulator are untouched; `kitt down` stops both. `--host` names the address where the machine has several.
+- **The emulator.** One device, one installed dev client. `kitt emu` makes the lane's ports reach it and sends the client to the lane's Metro; no native build. A proof holds a lock, so two agents never load over each other; `kitt who` says who has it. A running proof stays on the device it began on: a device started meanwhile does not take its shots, and if that device goes away `kitt proof shot` says so instead of switching.
+  - Android (any OS): an emulator or phone through `adb`; the ports are `adb reverse`d.
+  - iOS (Mac only): a booted simulator through `xcrun simctl`; it shares the Mac's network, so nothing is reversed. Screenshots come from `simctl io screenshot`. `kitt doctor` says whether `axe` or `idb` is installed; without either an agent can open screens only by deep link. Run inside a repo, it picks the device that repo's `[emulator]` asks for.
+  - kitt uses whichever is running, an attached Android device first. `platform = "ios"` (or `"android"`) under `[emulator]`, or `KITT_PLATFORM`, picks one; `serial` names an adb device, `simulator` a simulator by name or UDID.
+- **A phone.** A device on the Wi-Fi cannot reach the `localhost` a lane's app is told. `kitt phone` starts a second Metro next to the lane's (8112 beside 8111), with every local address in the app's env replaced by this machine's address on the network, and prints a code the phone's camera opens the dev client with. The lane's own Metro and the emulator are untouched; `kitt down` stops both. `--host` names the address where the machine has several. The replaced values are those kitt passes as the Metro's environment (`env_files`, `[app.env]`, `port_env`); Expo CLI's loader does not overwrite a variable the process already has (read from `@expo/env`'s source, not run), so they win over the lane's `env_out` file in that directory. A `localhost` URL that lives only in a `.env` file kitt does not read is not rewritten for the phone.
 - **Shared apps.** An app marked `shared` runs once, from the main checkout, for every lane (a database, a backend whose port is fixed).
+- **One stack at a time.** Where a machine cannot run every lane's servers at once, `[stack] mode = "single"` keeps one lane's stack up. See [Single stack](#single-stack).
 
 ## kitt.toml
 
@@ -110,9 +165,16 @@ link = ["apps/mobile/.env", "apps/mobile/.env.supabase.local"]
 
 [emulator]
 reverse = [54321]            # ports besides the apps' own the device must reach
+# platform = "ios"           # android | ios | auto (default); KITT_PLATFORM overrides
+# simulator = "iPhone 17"    # an iOS simulator by name or UDID; serial = an adb device
 
 [proof]
 guide = "docs/proof.md"      # or the text itself: test accounts, how to reach a screen
+
+# [stack]
+# mode = "single"            # one lane's servers at a time (default "parallel")
+# keep = ["db"]              # apps the single mode never stops, beside the shared ones
+# lease_ttl = "20m"          # how long a quiet holder keeps the stack
 
 [[app]]
 name = "mobile"
@@ -124,9 +186,19 @@ env_files = [".env.supabase.local"]
 setup = ["bun install --frozen-lockfile"]
 checks = ["bun run typecheck", "bun run lint", "bun run test"]
 
+env_out = ".env.development.local"   # gitignored: kitt writes [app.env] into it on every start
+
 [app.env]
 EXPO_PUBLIC_API_URL = "http://localhost:{port:api}"
 ```
+
+`[app.env]` reaches the dev server as its environment. Some setups read env files into the client bundle with those files winning over that environment, so a linked `.env.local` from the main checkout can send every lane's app to the main checkout's api. `env_out` names a file in the app's directory that `kitt up` writes the lane's `[app.env]` and `port_env` values into, sorted, mode 0600, before it starts the app; env files' values are never copied into it. Pick one the bundler reads last and the repo ignores; kitt warns when git would commit it and refuses a symlink (a linked file is the main checkout's). Expo CLI's own loader is not one of them: it leaves a variable the process already has alone, as its source reads (not run here). `env_out` matters where something else reads the files (an `app.config.js` that loads dotenv with `override`, `react-native-dotenv`) or Metro is started without kitt's environment; more in [docs/single-mode.md](docs/single-mode.md#what-is-written).
+
+The file's name decides whether it wins. Expo reads `.env.development.local`, `.env.local`, `.env.development` and `.env`, the first winning; when `.env.local` is linked from the main checkout, use `.env.development.local`. For an `expo` app, `kitt up` and `kitt doctor` warn when a file under `link` in the app's directory comes before `env_out` in that order (other kinds are not checked: Vite and Next order their files differently).
+
+Values are written so dotenv reads them back as they are: a line break as `\n` in double quotes, a value with a double quote in single quotes, `$` as `\$`.
+
+kitt remembers what it started each app with. When the command, the environment or `env_out` changes, the next `kitt up` or `kitt focus` restarts that app instead of leaving the old one running. This holds only for apps a kitt with `env_out` started: a Metro started before is left running as it is, so after upgrading run `kitt down` and `kitt up` once.
 
 `{port}`, `{port:<app>}`, `{lane}`, `{slot}`, `{root}` and `{main}` are filled per lane. `lazy = true` defers an app's setup and start until it is named; `shared = true` runs it once for all lanes.
 
@@ -137,13 +209,34 @@ Until a repo has its own `kitt.toml` on its base branch, a copy at `<kitt home>/
 ## Proof
 
 ```
-kitt proof begin             # takes the emulator, loads the lane's app, prints the repo's guide
+kitt proof begin             # takes the emulator (and the stack, in single mode), loads the lane's app, prints the repo's guide
 kitt proof shot "one section, no header"
 kitt proof end --pass        # or --fail --note "..."
 kitt proof open              # the page: verdict, note, shots in order
 ```
 
 Proofs are kept under kitt's own folder (`%APPDATA%\kitt\proofs`), outside the repo. A proof goes stale when the lane gets a new commit.
+
+## Single stack
+
+With `[stack] mode = "single"` a repo runs one lane's servers at a time, and the emulator shows that lane. A lease, kept in kitt's folder, says which lane holds the stack, since when and why.
+
+- `kitt focus`, `kitt up`, `kitt emu` and `kitt phone` take a **soft** lease: the lane that had the stack is stopped (its dev tab closed, its stop lines run, its phone Metro stopped, anything still on its ports killed) and the new lane's servers start.
+- A takeover waits ten seconds for each of the old lane's ports to fall quiet, then kills whatever still listens there, a server you started by hand included.
+- `kitt proof begin` and `kitt claim` take a **hard** lease, and the emulator with it. Another lane's `focus`, `up`, `emu` or `phone` fails naming the holder; `claim` and `proof begin` wait for it (`--wait 10m`) first. `--force` on `focus`, `emu`, `claim` or `new --up` takes it anyway, a person's call. In the dashboard the dialog of `enter`, `n` and `b` then offers it as a choice of its own, "take over the stack", naming whose test that ends; it is never the one the dialog starts on. `kitt proof end` and `kitt release` make it soft again; `kitt release --down` also stops the servers.
+- A hard lease lapses when the session that took it ends, or when it is not renewed for `lease_ttl` (each `kitt proof shot`, `claim` or `up` of the holder renews it). `kitt down` and `kitt rm` give up the lane's lease, and `kitt rm` the emulator too.
+
+```
+kitt claim --wait 10m --reason "maestro login flow"   # an agent's test that is not a proof
+kitt who                                              # who holds each repo's stack and the emulator
+kitt release                                          # done: the stack stays up, another lane may take it
+```
+
+`kitt ls` shows the lease above the lanes, the dashboard marks the holder with ⚿. The single mode needs herdr: kitt starts servers only in herdr panes, and stops only what it can find.
+
+The single mode is not supported on Windows yet. There kitt can neither tell which session holds a lease nor find what listens on a port to free it, so a lease would not keep lanes apart; every command that would take the stack refuses, and `kitt doctor` says so. Without `[stack]` lanes run in parallel as before; `kitt up --print`, `kitt who` and `kitt ls` work either way.
+
+[docs/single-mode.md](docs/single-mode.md) describes the lease, the takeover and `env_out` as the code has them, and their limits.
 
 ## pr-watch
 
@@ -175,6 +268,14 @@ The tools, as Claude sees them:
 - `mcp__pr-watch__rebase_and_push`: rebases onto the default branch and pushes with lease. A conflicting rebase is undone and answered with the files.
 
 The branch name sits at the end of the hint line. `/pr-watch` opens the full view of the PR. Keys work once the band has focus (click it, or ctrl+x tab).
+
+### In opencode
+
+`opencode/pr-watch` brings the band, its keys and the tools to opencode. It is experimental, a spike, and not published as a package. `.opencode/` in this repo's root loads it, so anyone who starts opencode inside the kitt repo gets it. Its merge guard is weaker than the mod's: merging is held by opencode's own permission prompt, and that prompt offers "always".
+
+## Development
+
+CI runs gofmt, `go vet` (also for Windows and macOS) and `go test -race` on the CLI, and the typecheck and tests of `opencode/pr-watch`. The Claude Code mod's tests run only through `claude plugin test`, not in CI.
 
 ## License
 

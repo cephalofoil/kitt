@@ -57,11 +57,12 @@ func cmdProof(args []string) error {
 		if label == "" {
 			return fail("usage: kitt proof shot <label>")
 		}
-		serial, err := adbDevice(loadRepoConfig(lane.Main, lane.Path))
+		renewStack(lane)
+		dev, err := laneDevice(lane, loadRepoConfig(lane.Main, lane.Path))
 		if err != nil {
 			return err
 		}
-		png, err := runBytes(20*time.Second, "adb", "-s", serial, "exec-out", "screencap", "-p")
+		png, err := dev.screenshot()
 		if err != nil || len(png) < 1000 {
 			return fail("the screenshot failed")
 		}
@@ -75,6 +76,7 @@ func cmdProof(args []string) error {
 		if len(rest) == 0 {
 			return fail("usage: kitt proof add <file> [label]")
 		}
+		renewStack(lane)
 		data, err := os.ReadFile(rest[0])
 		if err != nil {
 			return err
@@ -97,7 +99,11 @@ func cmdProof(args []string) error {
 		if opts["fail"] != "" {
 			verdict = "fail"
 		}
-		releaseEmulator(lane)
+		if notes, err := releaseStack(lane, false); err == nil {
+			for _, note := range notes {
+				fmt.Println(note)
+			}
+		}
 		head, _ := run(lane.Path, "git", "rev-parse", "HEAD")
 		tree := treeOf(lane.Path)
 		var done ProofState
@@ -154,17 +160,34 @@ func proofBegin(lane Lane, opts map[string]string) error {
 	cfg := loadRepoConfig(lane.Main, lane.Path)
 	useEmulator := lane.hasExpo(cfg) && opts["no-emulator"] == ""
 
+	wait := 10 * time.Minute
+	if value, err := time.ParseDuration(opts["wait"]); err == nil {
+		wait = value
+	}
+	// The single mode: the proof holds the stack (and the emulator) until it ends.
+	_, notes, err := acquireStack(lane, cfg, "hard", "proof", wait, false)
+	if err != nil {
+		return err
+	}
+	for _, note := range notes {
+		fmt.Println(note)
+	}
+	if cfg.Stack.single() && useEmulator {
+		for _, note := range startMetro(lane, cfg) {
+			fmt.Println(note)
+		}
+	}
+
 	if useEmulator {
-		wait := 10 * time.Minute
-		if value, err := time.ParseDuration(opts["wait"]); err == nil {
-			wait = value
+		if !cfg.Stack.single() {
+			if err := acquireEmulator(lane, wait); err != nil {
+				return err
+			}
 		}
-		if err := acquireEmulator(lane, wait); err != nil {
-			return err
-		}
-		message, err := pointEmulator(lane)
+		// A proof begun anew picks its device afresh, even over one left running.
+		message, err := pointOn(lane, func(_ Lane, cfg RepoConfig) (device, error) { return pickDevice(cfg) })
 		if err != nil {
-			releaseEmulator(lane)
+			_, _ = releaseStack(lane, false)
 			return err
 		}
 		fmt.Println(message)
@@ -176,12 +199,7 @@ func proofBegin(lane Lane, opts map[string]string) error {
 		return err
 	}
 	if err := updateState(func(s *State) {
-		entry := s.Lanes[lane.key()]
-		if entry == nil {
-			// The main checkout is a lane without an entry until something is kept for it.
-			entry = &LaneState{Repo: lane.Repo, Name: lane.Name, Path: lane.Path, Slot: lane.Slot, Created: time.Now()}
-			s.Lanes[lane.key()] = entry
-		}
+		entry := s.laneEntry(lane)
 		entry.Proof = &ProofState{Dir: dir, Status: "running", Started: time.Now()}
 	}); err != nil {
 		return err
@@ -189,7 +207,12 @@ func proofBegin(lane Lane, opts map[string]string) error {
 
 	fmt.Printf("proof started for %s\n  %s\n", lane.Name, dir)
 	if useEmulator {
-		fmt.Println("  the emulator is yours until `kitt proof end`; drive it with adb")
+		fmt.Println("  the emulator is yours until `kitt proof end`")
+		if dev, err := laneDevice(lane, cfg); err == nil {
+			fmt.Println("  " + dev.driveHint())
+		}
+	} else if cfg.Stack.single() {
+		fmt.Println("  the stack is yours until `kitt proof end`")
 	}
 	fmt.Println("  kitt proof shot <label>   after each step worth showing")
 	fmt.Println("  kitt proof end --pass     or --fail --note \"what is wrong\"")

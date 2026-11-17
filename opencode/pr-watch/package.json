@@ -1,0 +1,29 @@
+{
+  "name": "opencode-pr-watch",
+  "version": "0.0.1",
+  "description": "kitt's pr-watch for opencode: the branch's PR, uncommitted work and rebase state above the prompt",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    "./server": "./server.ts",
+    "./tui": "./tui.tsx"
+  },
+  "engines": {
+    "opencode": "^1.18.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "1.18.35"
+  },
+  "devDependencies": {
+    "@opentui/core": "0.4.5",
+    "@opentui/keymap": "0.4.5",
+    "@opentui/solid": "0.4.5",
+    "@types/bun": "^1.2.0",
+    "solid-js": "^1.9.0",
+    "typescript": "^5.8.0"
+  }
+}
