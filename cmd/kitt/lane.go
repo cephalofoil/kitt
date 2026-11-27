@@ -976,9 +976,15 @@ func cmdLink(args []string) error {
 }
 
 func cmdRm(args []string) error {
-	rest, opts := flags(args, "force")
+	rest, opts := flags(args, "force", "merged", "dry-run")
+	if opts["merged"] != "" {
+		return cmdRmMerged(opts["repo"], opts["dry-run"] != "")
+	}
+	if opts["dry-run"] != "" {
+		return fail("--dry-run goes with --merged")
+	}
 	if len(rest) == 0 {
-		return fail("usage: kitt rm <lane> [--force]")
+		return fail("usage: kitt rm <lane> [--force] | kitt rm --merged [--dry-run] [--repo r]")
 	}
 	lane, err := findLane(rest[0])
 	if err != nil {
@@ -999,7 +1005,14 @@ func cmdRm(args []string) error {
 			return fail("%s: %s (pass --force to remove it anyway)", lane.Name, reason)
 		}
 	}
+	// A fork whose commits are all in its lane's branch has nothing a deleted branch would lose.
+	return removeLane(lane, cfg, force, forkMerged(lane))
+}
 
+// removeLane takes a lane away: its servers, its leases, its links, its worktree
+// and its state. `dropBranch` deletes the branch whether or not git sees it as
+// merged (a squash-merged one never is); otherwise only a merged branch goes.
+func removeLane(lane Lane, cfg RepoConfig, force, dropBranch bool) error {
 	// Whatever the lane started (a container on its port) goes before its directory does.
 	down(lane)
 	// A lane that is gone holds nothing: its hard lease would keep other lanes out until its ttl.
@@ -1025,7 +1038,11 @@ func cmdRm(args []string) error {
 
 	// -d only deletes what is merged; a squash-merged branch stays and says so.
 	if lane.Branch != "" {
-		if _, err := run(lane.Main, "git", "branch", "-d", lane.Branch); err != nil {
+		flag := "-d"
+		if dropBranch {
+			flag = "-D"
+		}
+		if _, err := run(lane.Main, "git", "branch", flag, lane.Branch); err != nil {
 			fmt.Printf("removed %s; branch %s kept (not merged into %s as git sees it)\n", lane.Name, lane.Branch, cfg.Base)
 			return nil
 		}
@@ -1122,6 +1139,9 @@ func unsafeToRemove(lane Lane, cfg RepoConfig) string {
 		return "it has uncommitted changes"
 	}
 	if lane.Branch == "" {
+		return ""
+	}
+	if forkMerged(lane) {
 		return ""
 	}
 	ahead, _ := run(lane.Path, "git", "rev-list", "--count", "origin/"+cfg.Base+"..HEAD")
