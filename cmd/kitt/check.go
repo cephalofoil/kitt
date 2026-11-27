@@ -74,6 +74,32 @@ func check(lane Lane, all bool, only string, live bool) (CheckResult, string) {
 	head, _ := run(lane.Path, "git", "rev-parse", "HEAD")
 	result := CheckResult{At: time.Now(), Commit: head, Tree: treeOf(lane.Path)}
 	ran := 0
+	// runLine runs one check line in dir, prints its result and records it.
+	runLine := func(label, dir, line string) {
+		ran++
+		started := time.Now()
+		cmd := shell(dir, line)
+		var out bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &out, &out
+		err := cmd.Run()
+		took := time.Since(started).Round(100 * time.Millisecond)
+
+		if err == nil {
+			result.Passed++
+			say("✓ %-8s %s  %s\n", label, line, took)
+			return
+		}
+		result.Failed = append(result.Failed, label+": "+line)
+		say("✗ %-8s %s  %s\n", label, line, took)
+		lines := strings.Split(strings.TrimRight(out.String(), "\r\n"), "\n")
+		if len(lines) > 30 {
+			lines = lines[len(lines)-30:]
+		}
+		for _, l := range lines {
+			say("    %s\n", strings.TrimRight(l, "\r"))
+		}
+	}
+
 	for _, app := range apps {
 		if only != "" && app.Name != only {
 			continue
@@ -84,33 +110,18 @@ func check(lane Lane, all bool, only string, live bool) (CheckResult, string) {
 			ensureSetup(lane, cfg, app)
 		}
 		for _, line := range app.Checks {
-			line = cfg.expand(line, app, lane)
-			ran++
-			started := time.Now()
-			cmd := shell(dir, line)
-			var out bytes.Buffer
-			cmd.Stdout, cmd.Stderr = &out, &out
-			err := cmd.Run()
-			took := time.Since(started).Round(100 * time.Millisecond)
-
-			if err == nil {
-				result.Passed++
-				say("✓ %-8s %s  %s\n", app.Name, line, took)
-				continue
-			}
-			result.Failed = append(result.Failed, app.Name+": "+line)
-			say("✗ %-8s %s  %s\n", app.Name, line, took)
-			lines := strings.Split(strings.TrimRight(out.String(), "\r\n"), "\n")
-			if len(lines) > 30 {
-				lines = lines[len(lines)-30:]
-			}
-			for _, l := range lines {
-				say("    %s\n", strings.TrimRight(l, "\r"))
-			}
+			runLine(app.Name, dir, cfg.expand(line, app, lane))
+		}
+	}
+	// The repo's own checks (a linter over the diff) run after the apps', from the lane's root,
+	// whichever apps were touched. `--app` narrows a run to one app and leaves them out.
+	if only == "" {
+		for _, line := range cfg.Checks {
+			runLine("repo", lane.Path, cfg.expand(line, App{}, lane))
 		}
 	}
 	if ran == 0 {
-		say("no checks to run: no app with checks was touched on this lane (kitt check --all runs every app)\n")
+		say("no checks to run: no app with checks was touched and the repo has no checks of its own (kitt check --all runs every app)\n")
 	}
 
 	_ = updateState(func(s *State) {
