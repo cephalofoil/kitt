@@ -202,9 +202,21 @@ Values are written so dotenv reads them back as they are: a line break as `\n` i
 
 kitt remembers what it started each app with. When the command, the environment or `env_out` changes, the next `kitt up` or `kitt focus` restarts that app instead of leaving the old one running. This holds only for apps a kitt with `env_out` started: a Metro started before is left running as it is, so after upgrading run `kitt down` and `kitt up` once.
 
-`{port}`, `{port:<app>}`, `{lane}`, `{slot}`, `{root}` and `{main}` are filled per lane. `lazy = true` defers an app's setup and start until it is named; `shared = true` runs it once for all lanes.
+`{port}`, `{port:<app>}`, `{lane}`, `{slot}`, `{root}`, `{main}` and `{base}` (`origin/<base>`) are filled per lane. `lazy = true` defers an app's setup and start until it is named; `shared = true` runs it once for all lanes.
 
 `dev` runs in a herdr pane, in your shell; `setup` and `checks` run through `cmd /C` (`sh -c` elsewhere).
+
+`checks` at the top of the file (before any `[table]`) are the repo's own: `kitt check` runs them from the lane's root after the apps' checks, whatever apps were touched. This is where CI's diff-wide steps go, e.g. `checks = ["bun run lint --diff {base}"]`. `kitt check --app worker` runs one app's checks only. A check that fails makes `kitt check` exit 1; a step CI only reports (coverage) ends in `|| true` to be as lenient here.
+
+### Forks, status and cleanup
+
+```
+kitt fork <slice>            # sub-worktree <lane>-<slice> on branch <lane-branch>-<slice>, from the lane's tip, installed
+kitt status [lane]           # ports, who holds the stack, the database host and project ref the env files point at
+kitt rm --merged --dry-run   # which lanes would go: PR merged, tip on the remote, tree clean; the rest is kept with a reason
+```
+
+A fork is for an implementer agent that must commit with the repo's hooks. It is made by `git worktree add`, which carries neither `node_modules` nor what an install writes into the worktree (husky's `.husky/_`, the folder `core.hooksPath` points at: without it git skips every hook silently). So a fork runs the same setup as a lane, and kitt warns when `core.hooksPath` still points at nothing. Bring the fork's commits back with `git merge <fork branch>` in the lane; `kitt rm <fork>` then removes it and its branch without `--force`, and refuses while it holds commits the lane's branch lacks.
 
 Until a repo has its own `kitt.toml` on its base branch, a copy at `<kitt home>/repos/<repo folder>.toml` stands in; the repo's file wins once it exists.
 
