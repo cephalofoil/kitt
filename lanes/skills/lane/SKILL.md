@@ -11,13 +11,20 @@ A lane is one checkout of the repo for one ticket. Several lanes run side by sid
 
 ```bash
 kitt env        # this lane's name, slot and the port of each app
+kitt status     # the same, plus who holds the stack and which database the lane's env files point at
 ```
+
+`kitt status` works in any lane and in the main checkout. There is no other status command; do not guess one.
 
 Use those ports. Never assume 8081, 8000 or 3000: they belong to the main checkout.
 
 `kitt who` says whether the repo runs one stack at a time (`single`) and which lane holds it. In the single mode there is one stack: run `kitt claim --wait 10m` before you drive the app, `kitt release` when you are done, and never `kitt up` another lane's app.
 
 The env files in a lane are symlinks to the main checkout. Read them, do not edit them: an edit changes every lane.
+
+### Which database a lane talks to
+
+The linked env files decide, and they are the main checkout's: every lane shares them. `kitt status` prints, per env file, the database host and the project ref (never keys or passwords). Read that line before you run anything that writes (a migration, a seed, a test that cleans up) and say in your report which project it was. A repo that keeps a local database in a branch's own migrations needs the app and the API pointed at it again after every `kitt up`, because `kitt up` rewrites the lane's `env_out` file; check `kitt status` after it. Never put a database URL or a key into a command line, a commit or your report: the host and the ref are enough.
 
 ## Run the app
 
@@ -32,10 +39,38 @@ kitt down            # stop them
 ## Check before you report
 
 ```bash
-kitt check           # the repo's checks for the apps this lane touched
+kitt check           # the checks of every app this lane touched, then the repo's own (lint over the diff, coverage)
+kitt check --all     # every app's checks
 ```
 
-The checks are the repo's own (kitt.toml). Fix what fails; do not report done over a red check.
+The checks are the repo's own (kitt.toml) and are meant to equal what CI runs, so a green `kitt check` means CI will not find these problems after the push. Besides each touched app's tests, lint and type-check, the repo's checks cover the whole diff against the base (`{base}` is `origin/<base branch>`: run `git fetch` first if the base moved). `kitt check` exits 1 when any check fails. Fix what fails; do not report done over a red check. A step CI only reports (diff coverage) is report-only here too: read its output, it does not fail the run.
+
+## Hand a slice to an implementer: kitt fork
+
+```bash
+kitt fork <slice>            # in the lane: a sibling worktree <lane>-<slice>, branch <lane-branch>-<slice>, from the lane's tip, installed
+kitt fork <slice> --apps api # only that app's setup (a Python venv is slow)
+```
+
+Use it when an implementer agent (not you) works on one slice and must commit. Do not start agents in a bare `git worktree` or `.claude/worktrees` checkout: they start on the base branch, not on the lane's tip, and a fresh worktree has no installed dependencies and no hook shims (`core.hooksPath` points at a folder the install writes), so git skips the hooks silently or a linked `node_modules` breaks them. A fork is installed like a lane, so a commit in it runs the repo's real hooks. `kitt fork` warns when the hooks folder is still missing.
+
+Commits come back into the lane with `git merge <fork branch>` (or cherry-pick). Then `kitt rm <fork lane>` removes the worktree and the branch, without `--force`; it refuses while the fork holds commits the lane's branch lacks. Remove your forks when the slice is merged.
+
+## Clean up merged lanes
+
+```bash
+kitt rm --merged --dry-run   # which lanes would go, and why the others stay
+kitt rm --merged             # remove them
+```
+
+A lane goes when its PR is merged, its tip is on the remote and its tree is clean. A lane with unpushed commits, uncommitted files or an unmerged PR stays, with the reason printed. Never `kitt rm --force` a lane you did not create.
+
+## Forbidden
+
+- Never `--no-verify`, `HUSKY=0` or any other way around a repo's hooks. If a hook fails, fix what it reports; if it cannot run, say so and stop.
+- Never change the simulator's or emulator's text size or Dynamic Type, and do not ask for proofs at large text sizes.
+- Never `--force` past another lane's hold on the stack or the emulator.
+- Never edit a linked env file (it is the main checkout's) or print its secrets.
 
 ## Prove a change that is visible in the app
 

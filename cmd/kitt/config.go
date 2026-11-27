@@ -34,11 +34,14 @@ type RepoConfig struct {
 	BranchPrefix string   `toml:"branch_prefix"`
 	Link         []string `toml:"link"`
 	Setup        []string `toml:"setup"`
-	Agent        AgentCfg `toml:"agent"`
-	Emulator     EmuCfg   `toml:"emulator"`
-	Proof        ProofCfg `toml:"proof"`
-	Stack        StackCfg `toml:"stack"`
-	Apps         []App    `toml:"app"`
+	// Checks are the repo's own checks, run from the lane's root by `kitt check`
+	// after the apps' (a linter over the diff). {base} is the diff base, origin/<base>.
+	Checks   []string `toml:"checks"`
+	Agent    AgentCfg `toml:"agent"`
+	Emulator EmuCfg   `toml:"emulator"`
+	Proof    ProofCfg `toml:"proof"`
+	Stack    StackCfg `toml:"stack"`
+	Apps     []App    `toml:"app"`
 
 	// Source says where the config came from: a kitt.toml path, or "detected".
 	Source string `toml:"-"`
@@ -233,9 +236,9 @@ func (a App) port(slot int) int {
 	return a.Port + slot*portStride
 }
 
-var placeholder = regexp.MustCompile(`\{(port|lane|slot|root|main)(?::([a-zA-Z0-9_-]+))?\}`)
+var placeholder = regexp.MustCompile(`\{(port|lane|slot|root|main|base)(?::([a-zA-Z0-9_-]+))?\}`)
 
-// expand fills {port}, {port:<app>}, {lane}, {slot}, {root} and {main}.
+// expand fills {port}, {port:<app>}, {lane}, {slot}, {root}, {main} and {base} (origin/<base branch>).
 func (c RepoConfig) expand(text string, app App, lane Lane) string {
 	return placeholder.ReplaceAllStringFunc(text, func(match string) string {
 		parts := placeholder.FindStringSubmatch(match)
@@ -258,6 +261,8 @@ func (c RepoConfig) expand(text string, app App, lane Lane) string {
 			return filepath.ToSlash(lane.Path)
 		case "main":
 			return filepath.ToSlash(lane.Main)
+		case "base":
+			return "origin/" + c.Base
 		}
 		return match
 	})

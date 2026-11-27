@@ -29,7 +29,10 @@ type LaneState struct {
 	// AgentKind is what the lane's agent last started as (claude, opencode), when it was chosen.
 	AgentKind string    `json:"agent_kind,omitempty"`
 	Created   time.Time `json:"created"`
-	Setup     []string  `json:"setup,omitempty"`
+	// ForkOf is the lane a fork was branched from, ForkBranch that lane's branch.
+	ForkOf     string   `json:"fork_of,omitempty"`
+	ForkBranch string   `json:"fork_branch,omitempty"`
+	Setup      []string `json:"setup,omitempty"`
 	// Apps are the apps this lane is about; empty means the repo's usual ones.
 	Apps []string `json:"apps,omitempty"`
 	// Phone is the address of this machine the lane's phone Metro was started

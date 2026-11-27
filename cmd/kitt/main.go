@@ -40,7 +40,11 @@ const usage = `kitt — lanes for parallel work
   kitt who [--json]              which lane holds each repo's stack, and the emulator
   kitt open [lane] [app]         open the lane's web app in the browser
   kitt env [lane]                the lane's ports
-  kitt check [lane] [--all]      run the repo's checks for the apps the lane touched
+  kitt status [lane]             the lane's ports, who holds the stack, and the database its env files point at
+  kitt check [lane] [--all]      run the repo's checks for the apps the lane touched, then the repo's own
+        [--app a]                  one app's checks only; exits 1 when any check fails
+  kitt fork <slice> [--lane l]   a sub-worktree of the lane for one slice: branch <lane-branch>-<slice> from its tip,
+        [--apps a,b] [--no-setup]  installed (hooks included) so commits run the repo's hooks; kitt rm removes it
   kitt proof begin [--wait 10m]  take the emulator (and the stack in single mode), load the lane's app
   kitt proof shot <label>        a screenshot into the proof
   kitt proof add <file> [label]  any other image into the proof
@@ -50,6 +54,8 @@ const usage = `kitt — lanes for parallel work
   kitt link [lane]               link the env files again
   kitt setup [lane]              install what the lane runs and is not installed yet
   kitt rm <lane> [--force]       remove a lane that holds nothing unsaved
+  kitt rm --merged [--dry-run]   remove every lane whose PR is merged, tip on the remote and tree clean; says why it keeps the rest
+        [--repo r]
   kitt repo add [path] | list [--json] | rm <name>
   kitt init [path]               set a repo up: what kitt detects, shown piece by piece to keep, edit or drop
         [--agent]                  an agent reads the repo first and fills in what detection cannot see
@@ -91,7 +97,7 @@ func main() {
 		"dash": cmdDash, "new": cmdNew, "backlog": cmdBacklog, "ls": cmdLs, "list": cmdLs, "focus": cmdFocus, "up": cmdUp, "down": cmdDown,
 		"emu": cmdEmu, "phone": cmdPhone, "env": cmdEnv, "check": cmdCheck, "proof": cmdProof, "adopt": cmdAdopt, "link": cmdLink,
 		"rm": cmdRm, "agent": cmdAgent, "logo": cmdLogo, "setup": cmdSetup, "pr": cmdPr, "open": cmdOpen, "detect": cmdDetect, "repo": cmdRepo, "init": cmdInit, "doctor": cmdDoctor,
-		"claim": cmdClaim, "release": cmdRelease, "who": cmdWho,
+		"claim": cmdClaim, "release": cmdRelease, "who": cmdWho, "status": cmdStatus, "fork": cmdFork,
 		"herdr": cmdHerdr, "run-env": cmdRunEnv, "opencode": cmdOpencode,
 	}
 	command, ok := commands[args[0]]
